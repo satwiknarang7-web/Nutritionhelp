@@ -6,8 +6,23 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    supabase_url: str = ""
-    supabase_anon_key: str = ""
+    # Neon pooled connection string, e.g.
+    # postgresql://user:pass@ep-xxx-pooler.ap-southeast-1.aws.neon.tech/nutritrack?sslmode=require
+    database_url: str = ""
+    db_pool_min: int = 1
+    db_pool_max: int = 10
+
+    # Accounts
+    app_env: str = "production"  # "development" logs email links instead of failing silently
+    app_base_url: str = ""  # used in emails; defaults to the request's own URL
+    session_days: int = 30
+    require_email_verification: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_starttls: bool = True
 
     app_encryption_key: str = ""
 

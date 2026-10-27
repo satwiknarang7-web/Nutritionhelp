@@ -6,6 +6,7 @@ Run locally:  uvicorn app.main:app --reload
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -13,12 +14,20 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
+from app import db
 from app.auth import NotAuthenticated, auth_middleware
 from app.routers import api, pages
 
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="NutriTrack", docs_url=None, redoc_url=None)
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    yield
+    db.close_pool()
+
+
+app = FastAPI(title="NutriTrack", docs_url=None, redoc_url=None, lifespan=lifespan)
 
 
 class CachedStaticFiles(StaticFiles):

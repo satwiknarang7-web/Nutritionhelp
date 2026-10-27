@@ -6,12 +6,12 @@ import uuid
 from datetime import date
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
-from app import ai, crypto, external_foods, food_db, services
-from app.auth import get_repo
+from app import ai, auth, crypto, emailer, external_foods, food_db, services
+from app.auth import AuthUser, current_user, get_repo
 from app.config import get_settings
 from app.nutrients import NUTRIENTS, NUTRIENTS_BY_KEY, clean_nutrients, scale
 from app.repository import Repository
@@ -171,11 +171,17 @@ def delete_custom_food(food_id: str, repo: Repository = Depends(get_repo)):
     return {"ok": True}
 
 
-def _validate_uuid(value: str) -> None:
+def _is_uuid(value: str) -> bool:
     try:
         uuid.UUID(value)
-    except ValueError as exc:
-        raise HTTPException(404, "Not found") from exc
+        return True
+    except ValueError:
+        return False
+
+
+def _validate_uuid(value: str) -> None:
+    if not _is_uuid(value):
+        raise HTTPException(404, "Not found")
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +203,7 @@ class LogIn(BaseModel):
     source: Literal["manual", "photo", "text_ai", "custom"] = "manual"
     # Only used for AI-estimated items that are not in any database
     per_100g: dict[str, float] | None = None
-    photo_path: str | None = Field(default=None, max_length=300)
+    photo_id: str | None = Field(default=None, max_length=36)
 
     @field_validator("food_name", "unit")
     @classmethod
@@ -219,7 +225,7 @@ def _nutrients_for(repo: Repository, body: LogIn) -> tuple[dict, str | None, str
 @router.post("/logs")
 def add_log(body: LogIn, repo: Repository = Depends(get_repo)):
     nutrients, ref, name = _nutrients_for(repo, body)
-    photo_path = body.photo_path if body.photo_path and body.photo_path.startswith(f"{repo.user_id}/") else None
+    photo_id = body.photo_id if body.photo_id and _is_uuid(body.photo_id) and repo.owns_photo(body.photo_id) else None
     entry = repo.add_log(
         {
             "logged_on": body.logged_on.isoformat(),
@@ -231,7 +237,7 @@ def add_log(body: LogIn, repo: Repository = Depends(get_repo)):
             "unit": body.unit,
             "grams": round(body.grams, 2),
             "nutrients": nutrients,
-            "photo_path": photo_path,
+            "photo_id": photo_id,
         }
     )
     services.invalidate(repo)
@@ -370,8 +376,8 @@ async def analyze_photo(
         provider = _provider(repo)
         result = ai.analyze_photo(data, note, provider, repo.user_id)
         if save_photo and result.get("items"):
-            jpeg, mime = ai.prepare_image(data)
-            result["photo_path"] = repo.upload_photo(f"{uuid.uuid4()}.jpg", jpeg, mime)
+            thumb, mime = ai.prepare_image(data, max_side=1024, quality=80)
+            result["photo_id"] = repo.save_photo(thumb, mime)
         return result
 
     try:
@@ -396,14 +402,14 @@ def analyze_text(body: TextIn, repo: Repository = Depends(get_repo)):
         raise HTTPException(502, str(exc)) from exc
 
 
-@router.get("/photos/{path:path}")
-def photo_url(path: str, repo: Repository = Depends(get_repo)):
-    if not path.startswith(f"{repo.user_id}/"):
+@router.get("/photos/{photo_id}")
+def get_photo(photo_id: str, repo: Repository = Depends(get_repo)):
+    _validate_uuid(photo_id)
+    photo = repo.get_photo(photo_id)
+    if not photo:
         raise HTTPException(404, "Not found")
-    url = repo.photo_url(path)
-    if not url:
-        raise HTTPException(404, "Not found")
-    return {"url": url}
+    content, mime = photo
+    return Response(content, media_type=mime, headers={"Cache-Control": "private, max-age=86400"})
 
 
 # ---------------------------------------------------------------------------
@@ -507,3 +513,54 @@ def delete_gemini_key(repo: Repository = Depends(get_repo)):
     repo.delete_api_key("gemini")
     return ai_settings(repo)
 
+
+
+# ---------------------------------------------------------------------------
+# Account
+# ---------------------------------------------------------------------------
+class PasswordChange(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+@router.get("/account")
+def account(user: AuthUser = Depends(current_user)):
+    return {"email": user.email, "email_verified": user.email_verified, "email_enabled": emailer.email_configured()}
+
+
+@router.post("/account/password")
+def change_password(body: PasswordChange, request: Request, user: AuthUser = Depends(current_user)):
+    try:
+        auth.change_password(user.id, body.current_password, body.new_password, keep_token=request.state.session_token)
+    except auth.AuthError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True}
+
+
+@router.post("/account/verify-email")
+def resend_verification(request: Request, user: AuthUser = Depends(current_user)):
+    if user.email_verified:
+        return {"sent": False, "detail": "Your email is already confirmed."}
+    try:
+        auth._rate_limit(f"rl:verify:{user.id}", 3, 3600)
+    except auth.RateLimited as exc:
+        raise HTTPException(429, str(exc)) from exc
+    sent = auth.send_verification_email(user, auth.base_url(request))
+    if not sent:
+        raise HTTPException(503, "Email sending is not set up on this server.")
+    return {"sent": True}
+
+
+class DeleteAccount(BaseModel):
+    password: str = Field(min_length=1, max_length=128)
+
+
+@router.post("/account/delete")
+def delete_account(body: DeleteAccount, user: AuthUser = Depends(current_user)):
+    try:
+        auth.delete_account(user.id, body.password)
+    except auth.AuthError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    response = Response(status_code=204)
+    auth.clear_session_cookie(response)
+    return response

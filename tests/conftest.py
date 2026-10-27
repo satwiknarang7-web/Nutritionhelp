@@ -1,44 +1,65 @@
 import os
 
 import pytest
-from fastapi.testclient import TestClient
 
-os.environ.setdefault("SUPABASE_URL", "https://example.supabase.co")
-os.environ.setdefault("SUPABASE_ANON_KEY", "anon")
 os.environ.setdefault("COOKIE_SECURE", "false")
 os.environ.setdefault("APP_ENCRYPTION_KEY", "y24zFgtVXiUV_mapc97MJrN5bV1nNrcJ12dsflgm-k4=")
 os.environ["ENABLE_OPENFOODFACTS"] = "false"
 os.environ["ENABLE_USDA"] = "false"
 
-from app import auth, cache  # noqa: E402
-from app.main import app  # noqa: E402
-from tests.fakes import InMemoryRepository  # noqa: E402
+from tests.pg import TempPostgres  # noqa: E402
 
-USER = auth.AuthUser(id="00000000-0000-0000-0000-000000000001", email="asha@example.com")
+_pg = None
+if os.environ.get("TEST_DATABASE_URL"):
+    os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]
+else:
+    _pg = TempPostgres()
+    os.environ["DATABASE_URL"] = _pg.start()
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from app import auth, cache, db  # noqa: E402
+from app.main import app  # noqa: E402
+from app.migrate import migrate  # noqa: E402
+from app.repository import NeonRepository  # noqa: E402
+
+migrate(os.environ["DATABASE_URL"], verbose=False)
+
+PASSWORD = "correct-horse-battery"
+
+
+def pytest_sessionfinish(session, exitstatus):
+    db.close_pool()
+    if _pg:
+        _pg.stop()
 
 
 @pytest.fixture(autouse=True)
-def fresh_cache():
+def clean_state():
     cache._cache = cache.Cache(cache.MemoryCache())
+    with db.system_tx() as conn:
+        conn.execute("truncate users cascade")
     yield
 
 
 @pytest.fixture
-def repo():
-    return InMemoryRepository(USER.id)
+def user():
+    return auth.create_user("asha@example.com", PASSWORD, "Asha")
 
 
 @pytest.fixture
-def client(repo, monkeypatch):
-    monkeypatch.setattr(auth, "verify_access_token", lambda token: USER if token == "good" else None)
-    monkeypatch.setattr(auth, "refresh", lambda token: None)
-    app.dependency_overrides[auth.get_repo] = lambda: repo
-    c = TestClient(app, headers={"X-Requested-With": "fetch"})
-    c.cookies.set(auth.ACCESS_COOKIE, "good")
-    yield c
-    app.dependency_overrides.clear()
+def repo(user):
+    return NeonRepository(user.id)
 
 
 @pytest.fixture
 def anon_client():
     return TestClient(app)
+
+
+@pytest.fixture
+def client(user):
+    c = TestClient(app, headers={"X-Requested-With": "fetch"})
+    r = c.post("/login", data={"email": user.email, "password": PASSWORD}, follow_redirects=False)
+    assert r.status_code == 303, r.text
+    return c

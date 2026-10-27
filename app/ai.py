@@ -243,7 +243,7 @@ def _to_loggable(analysis: FoodAnalysis) -> dict:
 MAX_IMAGE_SIDE = 1568
 
 
-def prepare_image(data: bytes) -> tuple[bytes, str]:
+def prepare_image(data: bytes, max_side: int = MAX_IMAGE_SIDE, quality: int = 85) -> tuple[bytes, str]:
     """Validate the upload, fix orientation, downscale, and re-encode as JPEG."""
     from PIL import Image, ImageOps, UnidentifiedImageError
 
@@ -253,9 +253,9 @@ def prepare_image(data: bytes) -> tuple[bytes, str]:
     except (UnidentifiedImageError, OSError) as exc:
         raise AIError("That file doesn't look like a supported image.") from exc
     img = img.convert("RGB")
-    img.thumbnail((MAX_IMAGE_SIDE, MAX_IMAGE_SIDE))
+    img.thumbnail((max_side, max_side))
     out = io.BytesIO()
-    img.save(out, format="JPEG", quality=85)
+    img.save(out, format="JPEG", quality=quality)
     return out.getvalue(), "image/jpeg"
 
 

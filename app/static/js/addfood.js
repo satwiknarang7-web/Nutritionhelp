@@ -106,7 +106,7 @@
           logged_on: window.DIARY.day, meal: row.querySelector('[data-meal]').value,
           food_ref: it.food_ref, food_name: it.name, quantity: Math.round(it.quantity * scaleQty * 100) / 100 || 1,
           unit: it.unit, grams, source: result.source, per_100g: it.food_ref ? null : it.per_100g,
-          photo_path: result.photo_path || null,
+          photo_id: result.photo_id || null,
         });
         if (row.querySelector('[data-save]')?.checked) {
           saves.push({ name: it.name, serving_label: `1 ${it.unit}`, serving_grams: Math.max(1, it.grams / (it.quantity || 1)), per_100g: it.per_100g });

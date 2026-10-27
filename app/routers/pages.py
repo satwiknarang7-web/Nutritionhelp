@@ -5,11 +5,12 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
-from app import auth, services
+from app import auth, emailer, services
+from app.config import get_settings
 from app.auth import AuthUser, current_user, get_repo
 from app.nutrients import CATEGORIES, NUTRIENTS
 from app.repository import Repository
@@ -84,17 +85,18 @@ def login_page(request: Request, msg: str | None = None):
 @router.post("/login")
 async def login(request: Request, email: str = Form(...), password: str = Form(...)):
     try:
-        tokens = await run_in_threadpool(auth.sign_in, email.strip(), password)
+        user = await run_in_threadpool(auth.authenticate, email, password, auth.client_ip(request))
     except auth.AuthError as exc:
         return _render(request, "login.html", error=str(exc), email=email)
     response = RedirectResponse("/diary", status_code=303)
-    auth.set_session_cookies(response, tokens)
-    request.state.session_set = True
+    await auth.start_session(request, response, user)
     return response
 
 
 @router.get("/signup", response_class=HTMLResponse)
 def signup_page(request: Request):
+    if getattr(request.state, "user", None):
+        return RedirectResponse("/diary", status_code=303)
     return _render(request, "signup.html")
 
 
@@ -105,80 +107,65 @@ async def signup(
     email: str = Form(...),
     password: str = Form(...),
 ):
-    if len(password) < 8:
-        return _render(request, "signup.html", error="Password must be at least 8 characters.",
-                       email=email, display_name=display_name)
-    callback = str(request.url_for("auth_callback"))
+    form = {"email": email, "display_name": display_name}
     try:
-        tokens = await run_in_threadpool(auth.sign_up, email.strip(), password, display_name.strip(), callback)
+        await run_in_threadpool(auth._rate_limit, f"rl:signup:ip:{auth.client_ip(request)}", 10, 3600)
+        user = await run_in_threadpool(auth.create_user, email, password, display_name.strip())
     except auth.AuthError as exc:
-        return _render(request, "signup.html", error=str(exc), email=email, display_name=display_name)
-    if tokens is None:
+        return _render(request, "signup.html", error=str(exc), **form)
+    sent = await run_in_threadpool(auth.send_verification_email, user, auth.base_url(request))
+    if get_settings().require_email_verification and sent:
         return RedirectResponse("/login?msg=Check+your+email+to+confirm+your+account.", status_code=303)
     response = RedirectResponse("/profile?welcome=1", status_code=303)
-    auth.set_session_cookies(response, tokens)
-    request.state.session_set = True
+    await auth.start_session(request, response, user)
     return response
 
 
 @router.post("/logout")
 async def logout(request: Request):
-    token = getattr(request.state, "access_token", None)
+    token = request.cookies.get(auth.SESSION_COOKIE)
     if token:
-        await run_in_threadpool(auth.sign_out, token)
+        await run_in_threadpool(auth.destroy_session, token)
     response = RedirectResponse("/login", status_code=303)
-    auth.clear_session_cookies(response)
+    auth.clear_session_cookie(response)
     request.state.session_set = True
     return response
 
 
 @router.get("/forgot-password", response_class=HTMLResponse)
 def forgot_page(request: Request):
-    return _render(request, "forgot.html")
+    return _render(request, "forgot.html", email_enabled=emailer.email_configured())
 
 
 @router.post("/forgot-password")
 async def forgot(request: Request, email: str = Form(...)):
-    callback = str(request.url_for("auth_callback"))
-    await run_in_threadpool(auth.send_password_reset, email.strip(), callback)
-    return _render(request, "forgot.html", sent=True)
+    try:
+        await run_in_threadpool(auth.request_password_reset, email, auth.base_url(request), auth.client_ip(request))
+    except auth.RateLimited as exc:
+        return _render(request, "forgot.html", error=str(exc), email_enabled=True)
+    return _render(request, "forgot.html", sent=True, email_enabled=True)
 
 
-@router.get("/auth/callback", response_class=HTMLResponse, name="auth_callback")
-def auth_callback(request: Request):
-    """Supabase email links land here with tokens in the URL fragment; JS posts them to /auth/session."""
-    return _render(request, "callback.html")
+@router.get("/reset-password", response_class=HTMLResponse)
+def reset_page(request: Request, token: str = ""):
+    return _render(request, "reset.html", token=token)
 
 
-@router.post("/auth/session")
-async def auth_session(request: Request):
-    if request.headers.get("x-requested-with") != "fetch":
-        return JSONResponse({"error": "forbidden"}, status_code=403)
-    body = await request.json()
-    access, refresh = body.get("access_token"), body.get("refresh_token")
-    if not access or not refresh:
-        return JSONResponse({"error": "Missing tokens"}, status_code=400)
-    user = await run_in_threadpool(auth.verify_access_token, access)
-    if not user:
-        return JSONResponse({"error": "Invalid or expired link"}, status_code=400)
-    response = JSONResponse({"ok": True})
-    auth.set_session_cookies(
-        response, auth.SessionTokens(access, refresh, int(body.get("expires_in") or 3600), user)
-    )
-    request.state.session_set = True
+@router.post("/reset-password")
+async def reset_password(request: Request, token: str = Form(...), password: str = Form(...)):
+    try:
+        user = await run_in_threadpool(auth.reset_password, token, password)
+    except auth.AuthError as exc:
+        return _render(request, "reset.html", token=token, error=str(exc))
+    response = RedirectResponse("/diary", status_code=303)
+    await auth.start_session(request, response, user)
     return response
 
 
-@router.post("/auth/reset-password")
-async def reset_password(request: Request):
-    if request.headers.get("x-requested-with") != "fetch":
-        return JSONResponse({"error": "forbidden"}, status_code=403)
-    body = await request.json()
-    password = body.get("password") or ""
-    if len(password) < 8:
-        return JSONResponse({"error": "Password must be at least 8 characters."}, status_code=400)
-    try:
-        await run_in_threadpool(auth.update_password, body.get("access_token", ""), body.get("refresh_token", ""), password)
-    except auth.AuthError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=400)
-    return JSONResponse({"ok": True})
+@router.get("/verify-email", response_class=HTMLResponse)
+async def verify_email(request: Request, token: str = ""):
+    user = await run_in_threadpool(auth.verify_email, token)
+    if not user:
+        return _render(request, "login.html", error="That confirmation link is invalid or has expired.")
+    return RedirectResponse("/login?msg=Email+confirmed+-+welcome+to+NutriTrack!" if not getattr(
+        request.state, "user", None) else "/diary", status_code=303)

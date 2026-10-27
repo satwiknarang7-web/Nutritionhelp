@@ -4,7 +4,7 @@ A responsive nutrition tracker built for Indian food, inspired by [Cronometer](h
 Snap a photo of your thali, scan a packet's barcode, or search 570+ built-in dishes. NutriTrack tracks
 energy, macros, 10 vitamins, 7 minerals and water against goals based on ICMR-NIN guidelines.
 
-**Stack:** Python · FastAPI · Supabase (Postgres, Auth, Storage) · Redis or in-memory cache ·
+**Stack:** Python · FastAPI · Neon Postgres (psycopg 3) · built-in Argon2 auth · Redis or in-memory cache ·
 Gemini or Claude vision · vanilla JS + Chart.js
 
 ## Features
@@ -17,7 +17,7 @@ Gemini or Claude vision · vanilla JS + Chart.js
 | **Water** | Quick add (glass, bottle, 1 L, custom). Total water includes moisture from drinks and food, as in Cronometer |
 | **Goals** | Editable per-nutrient daily targets. "Suggest from my profile" uses Mifflin-St Jeor energy plus ICMR-NIN 2020 RDAs by sex, and a water target of 35 ml/kg |
 | **Reports** | Day, week, month, year or custom range. Energy, macros, water and any-nutrient charts against goals, macro and meal split, top foods, and a full average-vs-goal table |
-| **Auth** | Supabase email/password, email confirmation, password reset. httpOnly session cookies with transparent refresh |
+| **Auth** | Built-in: Argon2id password hashing, server-side sessions (hashed tokens, 30-day sliding expiry), login rate limiting, email verification and password reset over SMTP, change password, delete account |
 | **Bring your own AI key** | Users can save their own Gemini API key. It is encrypted at rest (Fernet) and never shown again |
 | **UI** | Mobile-first, sidebar on desktop and bottom tab bar on phones, light and dark mode, animated rings, bars, water glass and celebrations, respects reduced motion |
 
@@ -42,26 +42,25 @@ No single list can contain every food, so NutriTrack layers five sources:
 
 ## Setup
 
-### 1. Supabase
-1. Create a project at [supabase.com](https://supabase.com).
-2. Open **SQL Editor**, paste `supabase/migrations/0001_init.sql` and run it. This creates the tables,
-   row-level security policies, the signup trigger and a private `meal-photos` storage bucket.
-   Alternatively, run `supabase db push` with the Supabase CLI.
-3. **Authentication → URL Configuration**: add `https://YOUR_DOMAIN/auth/callback`
-   (and `http://localhost:8000/auth/callback`) to the redirect URLs. Email confirmation links and
-   password reset links land there.
-4. Copy the project URL and anon/publishable key from **Project Settings → API**.
+### 1. Neon database
+1. Create a project at [neon.tech](https://neon.tech). Singapore (`aws-ap-southeast-1`) is the closest region to India.
+2. Copy the **pooled** connection string (host contains `-pooler`) into `DATABASE_URL`.
+3. Apply the schema: `python -m app.migrate`. This creates the tables, the restricted `nutritrack_user`
+   role and the row-level security policies. It is safe to run again; applied migrations are tracked in
+   `schema_migrations`.
 
 ### 2. Configure
 ```bash
 cp .env.example .env
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"  # -> APP_ENCRYPTION_KEY
 ```
-Fill in `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `APP_ENCRYPTION_KEY`. All AI keys are optional:
+Fill in `DATABASE_URL` and `APP_ENCRYPTION_KEY`. Everything else is optional:
 
 | Variable | Purpose |
 |---|---|
 | `APP_ENCRYPTION_KEY` | Encrypts users' own Gemini keys. Required for "bring your own key" |
+| `SMTP_*` | Email for verification and password reset (Gmail app password, Resend, Brevo, SES…) |
+| `REQUIRE_EMAIL_VERIFICATION` | Block sign-in until the email is confirmed (default `false`) |
 | `GEMINI_API_KEY` | Optional app-wide Gemini key for users who have not added their own |
 | `GEMINI_MODEL` | Defaults to `gemini-2.5-flash` |
 | `ANTHROPIC_API_KEY` | Optional app-wide Claude fallback (`claude-opus-5-5`, with server-side refusal fallback) |
@@ -77,16 +76,18 @@ With none configured, photo and describe show a prompt to add a key, and everyth
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 uvicorn app.main:app --reload          # http://localhost:8000
-pytest                                 # 43 tests, no network or Supabase needed
+pytest                                 # spins up a throwaway local Postgres automatically
+# or point tests at any empty database: TEST_DATABASE_URL=postgresql://... pytest
 ```
 Or with Docker: `docker build -t nutritrack . && docker run -p 8000:8000 --env-file .env nutritrack`.
+Run `python -m app.migrate` (or `docker run --env-file .env nutritrack python -m app.migrate`) after each deploy that adds a migration.
 
 ## Caching
 
 | What | Where | Lifetime / invalidation |
 |---|---|---|
 | Diary days, range stats, goals, profile, custom foods | `u:<user>:v<N>:…` keys | Every write bumps the user's version `N`, which invalidates all of that user's cached data at once |
-| Auth token checks | `auth:<sha256(token)>` | 60 s, never past the token's expiry |
+| Session lookups | `sess:<sha256(token)>` | 60 s; cleared on sign-out and password change |
 | Built-in food search | `foods:search:<q>` | 1 h |
 | Open Food Facts / USDA search & items | `ext:search:*`, `ext:food:*` | 1 day / 30 days |
 | AI photo / text results | `ai:photo:<sha256(user, image, note)>` | 7 days, so re-analysing the same photo is free |
@@ -96,21 +97,27 @@ Or with Docker: `docker build -t nutritrack . && docker run -p 8000:8000 --env-f
 Cache outages never fail a request; the app falls back to the database.
 
 ## Security notes
-- Every query runs with the user's own Supabase JWT, so Postgres row-level security enforces
-  ownership in addition to explicit `user_id` filters.
+- **Row-level security in Neon:** each request runs in a transaction that switches to the restricted
+  `nutritrack_user` role and sets `app.user_id`. Postgres policies then only expose that user's rows,
+  even if a query forgets a `user_id` filter. The auth tables are not granted to that role at all.
+- Passwords are hashed with Argon2id. Session and reset tokens are 256-bit random values; only their
+  SHA-256 is stored. Login and reset requests are rate limited, and responses don't reveal whether an
+  email is registered.
+- Sessions are `HttpOnly`, `SameSite=Lax` cookies. State-changing API calls also require an
+  `X-Requested-With` header as CSRF protection. Password changes and resets revoke other sessions.
 - Nutrients for database foods are computed server-side from trusted data, never taken from the client.
-- Session tokens are in `HttpOnly`, `SameSite=Lax` cookies. State-changing API calls also require an
-  `X-Requested-With` header as CSRF protection.
-- Users' API keys are stored encrypted with a server-side key and are never returned to the browser
-  (only the last 4 characters).
-- Uploaded photos are re-encoded server-side and stored in a private bucket under the user's folder.
+- Users' API keys are encrypted with a server-side key and never returned to the browser (only the last 4 characters).
+- Meal photos are re-encoded server-side, stored as small JPEGs in Postgres, and only served to their owner.
 
 ## Project layout
 ```
 app/
   main.py              FastAPI app, middleware, error handling
-  auth.py              Supabase Auth, cookie sessions, refresh middleware
-  repository.py        Supabase data access (RLS-scoped per user)
+  auth.py              Accounts, sessions, verification/reset tokens, middleware
+  db.py                Neon connection pool + per-user RLS transactions
+  migrate.py           Migration runner (python -m app.migrate)
+  emailer.py           SMTP email for verification and password reset
+  repository.py        Data access (runs as the restricted per-user role)
   services.py          Cached reads + food resolution across sources
   cache.py             Redis / in-memory cache with per-user versioning
   ai.py                Gemini / Claude vision + text estimation
@@ -121,6 +128,6 @@ app/
   routers/api.py       JSON API
   routers/pages.py     Pages and auth forms
   templates/, static/  Jinja templates, CSS, JS
-supabase/migrations/   Schema, RLS policies, storage bucket
-tests/                 pytest suite with an in-memory repository
+migrations/            Schema, role and RLS policies
+tests/                 pytest suite against a real (temporary) Postgres
 ```

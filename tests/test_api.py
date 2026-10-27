@@ -146,7 +146,10 @@ def test_photo_analysis_links_catalog_and_caches(client, repo, monkeypatch):
     assert round(dosa["nutrients"]["energy"]) == round(165 * 1.8)
     assert chutney["basis"] == "ai_estimate" and chutney["nutrients"]["energy"] == 2
     assert chutney["per_100g"]["energy"] == 5
-    assert body["photo_path"].startswith(repo.user_id)
+    photo = client.get(f"/api/photos/{body['photo_id']}")
+    assert photo.status_code == 200 and photo.headers["content-type"] == "image/jpeg"
+    logged = add(client, food_name="Chutney", per_100g={"energy": 5}, photo_id=body["photo_id"], source="photo").json()
+    assert logged["photo_id"] == body["photo_id"]
 
     client.post("/api/analyze/photo", files=files, data={"note": ""})
     assert len(calls) == 1  # identical photo served from cache
@@ -159,7 +162,7 @@ def test_gemini_key_is_encrypted(client, repo, monkeypatch):
     key = "AIzaSyTESTKEY_1234567890abcd"
     r = client.put("/api/settings/ai/gemini", json={"api_key": key}).json()
     assert r["has_user_key"] and r["key_hint"] == "…abcd"
-    stored = repo.keys["gemini"]["encrypted_key"]
+    stored = repo.get_api_key("gemini")["encrypted_key"]
     assert key not in stored
     assert "Gemini (your key)" == r["active_provider"]
     monkeypatch.setattr(ai, "validate_gemini_key", lambda k: False)
@@ -173,40 +176,3 @@ def test_pages_render(client):
         assert r.status_code == 200, path
         assert "NutriTrack" in r.text
 
-
-def test_login_sets_session_cookies_even_with_stale_cookie(anon_client, monkeypatch):
-    from app import auth
-
-    tokens = auth.SessionTokens("new-access", "new-refresh", 3600, auth.AuthUser("u", "a@b.c"))
-    monkeypatch.setattr(auth, "sign_in", lambda e, p: tokens)
-    monkeypatch.setattr(auth, "verify_access_token", lambda t: None)
-    monkeypatch.setattr(auth, "refresh", lambda t: None)
-    anon_client.cookies.set(auth.ACCESS_COOKIE, "stale")
-    r = anon_client.post("/login", data={"email": "a@b.c", "password": "secret123"}, follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == "/diary"
-    cookies = r.headers.get_list("set-cookie")
-    assert any(c.startswith(f"{auth.ACCESS_COOKIE}=new-access") and "HttpOnly" in c for c in cookies)
-    assert not any(c.startswith(f'{auth.ACCESS_COOKIE}=""') for c in cookies)
-
-
-def test_login_error_is_shown(anon_client, monkeypatch):
-    from app import auth
-
-    def fail(e, p):
-        raise auth.AuthError("Invalid login credentials")
-
-    monkeypatch.setattr(auth, "sign_in", fail)
-    r = anon_client.post("/login", data={"email": "a@b.c", "password": "x"})
-    assert "Invalid login credentials" in r.text
-
-
-def test_expired_session_is_refreshed(anon_client, monkeypatch):
-    from app import auth
-
-    user = auth.AuthUser("00000000-0000-0000-0000-000000000001", "a@b.c")
-    monkeypatch.setattr(auth, "verify_access_token", lambda t: None)
-    monkeypatch.setattr(auth, "refresh", lambda t: auth.SessionTokens("fresh", "r2", 3600, user) if t == "r1" else None)
-    anon_client.cookies.set(auth.REFRESH_COOKIE, "r1")
-    r = anon_client.get("/api/nutrients", headers={"X-Requested-With": "fetch"})
-    assert r.status_code == 200
-    assert any(c.startswith(f"{auth.ACCESS_COOKIE}=fresh") for c in r.headers.get_list("set-cookie"))

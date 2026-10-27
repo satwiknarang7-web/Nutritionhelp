@@ -1,9 +1,14 @@
 {% extends "auth_base.html" %}
 {% block title %}Reset password{% endblock %}
 {% block auth %}
-{% if sent %}
-<div class="alert alert-info">If an account exists for that email, a reset link is on its way.</div>
+<h2 class="auth-title">Forgot your password?</h2>
+{% if error %}<div class="alert alert-error" role="alert">{{ error }}</div>{% endif %}
+{% if not email_enabled %}
+<div class="alert alert-info">Password reset by email isn't set up on this server yet. Ask the administrator to configure SMTP.</div>
+{% elif sent %}
+<div class="alert alert-info">📬 If an account exists for that email, a reset link is on its way. It expires in 1 hour.</div>
 {% else %}
+<p class="muted small">Enter your email and we'll send you a link to choose a new password.</p>
 <form method="post" action="/forgot-password">
   <div class="field"><label for="email">Email</label><input id="email" name="email" type="email" autocomplete="email" required></div>
   <button class="btn btn-primary btn-block" type="submit">Send reset link</button>

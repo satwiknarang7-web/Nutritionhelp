@@ -1,0 +1,15 @@
+{% extends "auth_base.html" %}
+{% block title %}Choose a new password{% endblock %}
+{% block auth %}
+<h2 class="auth-title">Choose a new password</h2>
+{% if error %}<div class="alert alert-error" role="alert">{{ error }}</div>{% endif %}
+{% if token %}
+<form method="post" action="/reset-password">
+  <input type="hidden" name="token" value="{{ token }}">
+  <div class="field"><label for="password">New password</label><input id="password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required></div>
+  <button class="btn btn-primary btn-block" type="submit">Save and sign in</button>
+</form>
+{% else %}
+<div class="alert alert-error">This reset link is incomplete. <a href="/forgot-password">Request a new one</a>.</div>
+{% endif %}
+{% endblock %}

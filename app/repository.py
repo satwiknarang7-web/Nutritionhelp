@@ -1,32 +1,28 @@
-"""Data access for one signed-in user.
+"""Data access for one signed-in user, backed by Neon Postgres.
 
-`SupabaseRepository` talks to Supabase with the *user's* access token, so every
-query is checked by Postgres row level security in addition to the explicit
-user_id filters here.
+Every method runs in `db.user_tx`, i.e. as the restricted `nutritrack_user`
+role with row level security scoped to this user, in addition to the explicit
+user_id filters below.
 """
 
 from __future__ import annotations
 
-import logging
-from datetime import date, datetime, timezone
+import uuid
+from datetime import date, datetime
 from typing import Any, Protocol
 
-from postgrest import SyncPostgrestClient
-from storage3 import SyncStorageClient
+from psycopg.types.json import Jsonb
 
-from app.config import Settings
+from app import db
 
-log = logging.getLogger(__name__)
-
-PHOTO_BUCKET = "meal-photos"
-PAGE_SIZE = 1000
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-LOG_COLUMNS = "id,logged_on,meal,food_name,food_ref,source,quantity,unit,grams,nutrients,photo_path,created_at"
+LOG_COLUMNS = (
+    "id, logged_on, meal, food_name, food_ref, source, quantity, unit, grams, nutrients, photo_id, created_at"
+)
+FOOD_COLUMNS = "id, name, category, per_100g, servings"
+PROFILE_FIELDS = (
+    "display_name", "sex", "date_of_birth", "height_cm", "weight_kg",
+    "activity_level", "weight_goal", "diet_type", "timezone",
+)
 
 
 class Repository(Protocol):
@@ -37,6 +33,7 @@ class Repository(Protocol):
     def get_goals(self) -> dict[str, float]: ...
     def set_goals(self, goals: dict[str, float]) -> None: ...
     def list_logs(self, start: date, end: date) -> list[dict]: ...
+    def logged_days(self, start: date, end: date) -> dict[str, float]: ...
     def get_log(self, log_id: str) -> dict | None: ...
     def add_log(self, entry: dict) -> dict: ...
     def update_log(self, log_id: str, fields: dict) -> dict | None: ...
@@ -48,192 +45,196 @@ class Repository(Protocol):
     def get_api_key(self, provider: str) -> dict | None: ...
     def set_api_key(self, provider: str, encrypted_key: str, key_hint: str) -> None: ...
     def delete_api_key(self, provider: str) -> None: ...
-    def upload_photo(self, name: str, data: bytes, content_type: str) -> str | None: ...
-    def photo_url(self, path: str) -> str | None: ...
+    def save_photo(self, data: bytes, mime_type: str) -> str: ...
+    def get_photo(self, photo_id: str) -> tuple[bytes, str] | None: ...
+    def owns_photo(self, photo_id: str) -> bool: ...
     def close(self) -> None: ...
 
 
-class SupabaseRepository:
-    def __init__(self, settings: Settings, user_id: str, access_token: str):
-        self.user_id = user_id
-        headers = {
-            "apikey": settings.supabase_anon_key,
-            "Authorization": f"Bearer {access_token}",
-        }
-        self._db = SyncPostgrestClient(
-            f"{settings.supabase_url}/rest/v1",
-            headers={**headers, "Accept": "application/json", "Content-Type": "application/json"},
-            timeout=15,
-        )
-        self._storage_headers = headers
-        self._settings = settings
-        self._storage: SyncStorageClient | None = None
+def _plain(value: Any) -> Any:
+    """JSON-friendly values so rows can be cached and rendered directly."""
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, memoryview):
+        return bytes(value)
+    return value
+
+
+def _row(row: dict | None) -> dict | None:
+    return {k: _plain(v) for k, v in row.items()} if row else None
+
+
+class NeonRepository:
+    def __init__(self, user_id: str):
+        self.user_id = str(user_id)
 
     def close(self) -> None:
-        for client in (self._db, self._storage):
-            try:
-                if client is not None:
-                    client.session.close()
-            except Exception:  # noqa: BLE001
-                pass
+        pass  # connections are borrowed from the pool per call
 
-    def _t(self, table: str):
-        return self._db.from_(table)
+    def _one(self, sql: str, params: tuple | dict = ()) -> dict | None:
+        with db.user_tx(self.user_id) as conn:
+            return _row(conn.execute(sql, params).fetchone())
+
+    def _all(self, sql: str, params: tuple | dict = ()) -> list[dict]:
+        with db.user_tx(self.user_id) as conn:
+            return [_row(r) for r in conn.execute(sql, params).fetchall()]
 
     # --- profile ---
     def get_profile(self) -> dict | None:
-        res = self._t("profiles").select("*").eq("id", self.user_id).limit(1).execute()
-        return res.data[0] if res.data else None
+        row = self._one("select * from profiles where user_id = %s", (self.user_id,))
+        if row:
+            row["id"] = row["user_id"]
+        return row
 
     def update_profile(self, data: dict) -> dict:
-        payload = {**data, "id": self.user_id, "updated_at": _now()}
-        res = self._t("profiles").upsert(payload, on_conflict="id").execute()
-        return res.data[0] if res.data else payload
+        fields = {k: data.get(k) for k in PROFILE_FIELDS if k in data}
+        if not fields:
+            return self.get_profile() or {"id": self.user_id}
+        cols = ", ".join(fields)
+        placeholders = ", ".join(f"%({k})s" for k in fields)
+        updates = ", ".join(f"{k} = excluded.{k}" for k in fields)
+        row = self._one(
+            f"insert into profiles (user_id, {cols}) values (%(user_id)s, {placeholders}) "
+            f"on conflict (user_id) do update set {updates}, updated_at = now() returning *",
+            {**fields, "user_id": self.user_id},
+        )
+        row["id"] = row["user_id"]
+        return row
 
     # --- goals ---
     def get_goals(self) -> dict[str, float]:
-        res = self._t("nutrient_goals").select("nutrient,target").eq("user_id", self.user_id).execute()
-        return {row["nutrient"]: float(row["target"]) for row in res.data or []}
+        rows = self._all("select nutrient, target from nutrient_goals where user_id = %s", (self.user_id,))
+        return {r["nutrient"]: float(r["target"]) for r in rows}
 
     def set_goals(self, goals: dict[str, float]) -> None:
-        rows = [
-            {"user_id": self.user_id, "nutrient": k, "target": v, "updated_at": _now()}
-            for k, v in goals.items()
-        ]
-        if rows:
-            self._t("nutrient_goals").upsert(rows, on_conflict="user_id,nutrient").execute()
+        if not goals:
+            return
+        with db.user_tx(self.user_id) as conn, conn.cursor() as cur:
+            cur.executemany(
+                "insert into nutrient_goals (user_id, nutrient, target) values (%s, %s, %s) "
+                "on conflict (user_id, nutrient) do update set target = excluded.target, updated_at = now()",
+                [(self.user_id, k, float(v)) for k, v in goals.items()],
+            )
 
     # --- diary ---
     def list_logs(self, start: date, end: date) -> list[dict]:
-        rows: list[dict] = []
-        offset = 0
-        while True:
-            res = (
-                self._t("food_logs")
-                .select(LOG_COLUMNS)
-                .eq("user_id", self.user_id)
-                .gte("logged_on", start.isoformat())
-                .lte("logged_on", end.isoformat())
-                .order("logged_on")
-                .order("created_at")
-                .range(offset, offset + PAGE_SIZE - 1)
-                .execute()
-            )
-            batch = res.data or []
-            rows.extend(batch)
-            if len(batch) < PAGE_SIZE:
-                return rows
-            offset += PAGE_SIZE
+        return self._all(
+            f"select {LOG_COLUMNS} from food_logs where user_id = %s and logged_on between %s and %s "
+            "order by logged_on, created_at",
+            (self.user_id, start, end),
+        )
+
+    def logged_days(self, start: date, end: date) -> dict[str, float]:
+        """Energy per logged day - a cheap query for the week strip, calendar and streaks."""
+        rows = self._all(
+            "select logged_on, sum(coalesce((nutrients->>'energy')::float8, 0)) as energy "
+            "from food_logs where user_id = %s and logged_on between %s and %s "
+            "and coalesce(food_ref, '') <> 'water' group by logged_on",
+            (self.user_id, start, end),
+        )
+        return {r["logged_on"]: float(r["energy"] or 0) for r in rows}
 
     def get_log(self, log_id: str) -> dict | None:
-        res = (
-            self._t("food_logs")
-            .select(LOG_COLUMNS)
-            .eq("id", log_id)
-            .eq("user_id", self.user_id)
-            .limit(1)
-            .execute()
-        )
-        return res.data[0] if res.data else None
+        return self._one(f"select {LOG_COLUMNS} from food_logs where id = %s and user_id = %s", (log_id, self.user_id))
 
     def add_log(self, entry: dict) -> dict:
-        res = self._t("food_logs").insert({**entry, "user_id": self.user_id}).execute()
-        return res.data[0]
+        return self._one(
+            "insert into food_logs (user_id, logged_on, meal, food_name, food_ref, source, quantity, unit, grams, "
+            "nutrients, photo_id) values (%(user_id)s, %(logged_on)s, %(meal)s, %(food_name)s, %(food_ref)s, "
+            f"%(source)s, %(quantity)s, %(unit)s, %(grams)s, %(nutrients)s, %(photo_id)s) returning {LOG_COLUMNS}",
+            {
+                "user_id": self.user_id,
+                "logged_on": entry["logged_on"],
+                "meal": entry["meal"],
+                "food_name": entry["food_name"],
+                "food_ref": entry.get("food_ref"),
+                "source": entry.get("source", "manual"),
+                "quantity": entry["quantity"],
+                "unit": entry["unit"],
+                "grams": entry["grams"],
+                "nutrients": Jsonb(entry.get("nutrients") or {}),
+                "photo_id": entry.get("photo_id"),
+            },
+        )
 
     def update_log(self, log_id: str, fields: dict) -> dict | None:
-        res = (
-            self._t("food_logs")
-            .update(fields)
-            .eq("id", log_id)
-            .eq("user_id", self.user_id)
-            .execute()
+        allowed = {k: v for k, v in fields.items() if k in ("meal", "quantity", "unit", "grams", "nutrients")}
+        if not allowed:
+            return self.get_log(log_id)
+        if "nutrients" in allowed:
+            allowed["nutrients"] = Jsonb(allowed["nutrients"])
+        sets = ", ".join(f"{k} = %({k})s" for k in allowed)
+        return self._one(
+            f"update food_logs set {sets} where id = %(id)s and user_id = %(user_id)s returning {LOG_COLUMNS}",
+            {**allowed, "id": log_id, "user_id": self.user_id},
         )
-        return res.data[0] if res.data else None
 
     def delete_log(self, log_id: str) -> bool:
-        res = self._t("food_logs").delete().eq("id", log_id).eq("user_id", self.user_id).execute()
-        return bool(res.data)
+        row = self._one("delete from food_logs where id = %s and user_id = %s returning id", (log_id, self.user_id))
+        return row is not None
 
     # --- custom foods ---
     def list_custom_foods(self) -> list[dict]:
-        res = (
-            self._t("custom_foods")
-            .select("id,name,category,per_100g,servings")
-            .eq("user_id", self.user_id)
-            .order("name")
-            .execute()
-        )
-        return res.data or []
+        return self._all(f"select {FOOD_COLUMNS} from custom_foods where user_id = %s order by name", (self.user_id,))
 
     def get_custom_food(self, food_id: str) -> dict | None:
-        res = (
-            self._t("custom_foods")
-            .select("id,name,category,per_100g,servings")
-            .eq("id", food_id)
-            .eq("user_id", self.user_id)
-            .limit(1)
-            .execute()
+        return self._one(
+            f"select {FOOD_COLUMNS} from custom_foods where id = %s and user_id = %s", (food_id, self.user_id)
         )
-        return res.data[0] if res.data else None
 
     def add_custom_food(self, food: dict) -> dict:
-        res = self._t("custom_foods").insert({**food, "user_id": self.user_id}).execute()
-        return res.data[0]
+        return self._one(
+            "insert into custom_foods (user_id, name, category, per_100g, servings) values (%s, %s, %s, %s, %s) "
+            f"returning {FOOD_COLUMNS}",
+            (
+                self.user_id,
+                food["name"],
+                food.get("category", "My foods"),
+                Jsonb(food["per_100g"]),
+                Jsonb(food.get("servings", [])),
+            ),
+        )
 
     def delete_custom_food(self, food_id: str) -> bool:
-        res = self._t("custom_foods").delete().eq("id", food_id).eq("user_id", self.user_id).execute()
-        return bool(res.data)
+        row = self._one("delete from custom_foods where id = %s and user_id = %s returning id", (food_id, self.user_id))
+        return row is not None
 
     # --- user API keys (ciphertext only) ---
     def get_api_key(self, provider: str) -> dict | None:
-        res = (
-            self._t("user_api_keys")
-            .select("encrypted_key,key_hint,updated_at")
-            .eq("user_id", self.user_id)
-            .eq("provider", provider)
-            .limit(1)
-            .execute()
+        return self._one(
+            "select encrypted_key, key_hint, updated_at from user_api_keys where user_id = %s and provider = %s",
+            (self.user_id, provider),
         )
-        return res.data[0] if res.data else None
 
     def set_api_key(self, provider: str, encrypted_key: str, key_hint: str) -> None:
-        self._t("user_api_keys").upsert(
-            {
-                "user_id": self.user_id,
-                "provider": provider,
-                "encrypted_key": encrypted_key,
-                "key_hint": key_hint,
-                "updated_at": _now(),
-            },
-            on_conflict="user_id,provider",
-        ).execute()
+        self._one(
+            "insert into user_api_keys (user_id, provider, encrypted_key, key_hint) values (%s, %s, %s, %s) "
+            "on conflict (user_id, provider) do update set encrypted_key = excluded.encrypted_key, "
+            "key_hint = excluded.key_hint, updated_at = now() returning provider",
+            (self.user_id, provider, encrypted_key, key_hint),
+        )
 
     def delete_api_key(self, provider: str) -> None:
-        self._t("user_api_keys").delete().eq("user_id", self.user_id).eq("provider", provider).execute()
+        self._one(
+            "delete from user_api_keys where user_id = %s and provider = %s returning provider",
+            (self.user_id, provider),
+        )
 
     # --- photos ---
-    @property
-    def storage(self) -> SyncStorageClient:
-        if self._storage is None:
-            self._storage = SyncStorageClient(
-                f"{self._settings.supabase_url}/storage/v1/", self._storage_headers
-            )
-        return self._storage
+    def save_photo(self, data: bytes, mime_type: str) -> str:
+        row = self._one(
+            "insert into meal_photos (user_id, content, mime_type) values (%s, %s, %s) returning id",
+            (self.user_id, data, mime_type),
+        )
+        return row["id"]
 
-    def upload_photo(self, name: str, data: bytes, content_type: str) -> str | None:
-        path = f"{self.user_id}/{name}"
-        try:
-            self.storage.from_(PHOTO_BUCKET).upload(
-                path, data, {"content-type": content_type, "upsert": "true"}
-            )
-            return path
-        except Exception:  # noqa: BLE001 - photo storage is best-effort
-            log.warning("photo upload failed", exc_info=True)
-            return None
+    def get_photo(self, photo_id: str) -> tuple[bytes, str] | None:
+        row = self._one(
+            "select content, mime_type from meal_photos where id = %s and user_id = %s", (photo_id, self.user_id)
+        )
+        return (row["content"], row["mime_type"]) if row else None
 
-    def photo_url(self, path: str) -> str | None:
-        try:
-            res: Any = self.storage.from_(PHOTO_BUCKET).create_signed_url(path, 3600)
-            return res.get("signedURL") or res.get("signedUrl")
-        except Exception:  # noqa: BLE001
-            return None
+    def owns_photo(self, photo_id: str) -> bool:
+        return self._one("select 1 as ok from meal_photos where id = %s and user_id = %s", (photo_id, self.user_id)) is not None
