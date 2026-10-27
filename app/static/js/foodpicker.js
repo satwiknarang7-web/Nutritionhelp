@@ -113,7 +113,7 @@
       const d = $('detail');
       d.innerHTML = `
         <button type="button" class="btn btn-ghost btn-sm" data-act="back">← Back to results</button>
-        <h3 style="margin-top:8px;display:flex;gap:8px;align-items:center"><span class="food-emoji">${NT.emoji(food)}</span>${NT.esc(food.name)} ${sourceBadge(food)}</h3>
+        <h3 style="margin-top:10px;display:flex;gap:12px;align-items:center"><span class="food-tile" style="--tile:${NT.tile(food)}">${NT.emoji(food)}</span>${NT.esc(food.name)} ${sourceBadge(food)}</h3>
         <div class="row">
           <div class="field"><label for="fp-qty">Quantity</label><input id="fp-qty" type="number" min="0.1" step="0.5" value="${options.length > 1 ? 1 : 100}" inputmode="decimal"></div>
           <div class="field"><label for="fp-unit">Serving</label><select id="fp-unit">${options.map((o, i) => `<option value="${i}">${NT.esc(o.label)}${o.grams !== 1 ? ` (${NT.fmt(o.grams, 0)} g)` : ''}</option>`).join('')}</select></div>
@@ -206,6 +206,7 @@
     }
 
     return {
+      search: (term) => { q.value = term; search(term); q.focus(); },
       focus: () => q.focus(),
       reset: () => { stopScan(); q.value = ''; search(''); },
       stop: stopScan,

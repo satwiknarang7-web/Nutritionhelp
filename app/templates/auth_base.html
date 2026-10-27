@@ -1,20 +1,32 @@
 {% extends "base.html" %}
 {% block body %}
-<div class="auth-wrap">
-  <div class="floaters" aria-hidden="true">
-    <span style="left:6%;top:12%">🥭</span>
-    <span style="left:82%;top:8%;animation-delay:-2s">🥦</span>
-    <span style="left:12%;top:72%;animation-delay:-4s">🍌</span>
-    <span style="left:76%;top:70%;animation-delay:-1s">🥕</span>
-    <span style="left:45%;top:4%;animation-delay:-6s">🍋</span>
-    <span style="left:90%;top:40%;animation-delay:-3s">🍅</span>
-    <span style="left:2%;top:42%;animation-delay:-5s">🫑</span>
-    <span style="left:50%;top:86%;animation-delay:-7s">🥥</span>
-  </div>
-  <div class="card auth-card">
-    <div class="brand">{{ icon('leaf', 28) }} NutriTrack</div>
-    <p class="tagline">Track every thali, nutrient and glass of water.</p>
-    {% block auth %}{% endblock %}
-  </div>
+<div class="auth">
+  <section class="auth-art" aria-hidden="false">
+    <a href="/login" class="logo"><span class="logo-mark">{{ icon('leaf', 20) }}</span> NutriTrack</a>
+    <div>
+      <h1>Eat well, the Indian way.</h1>
+      <p class="lead">From idli to ilish, track every thali, nutrient and glass of water - with a photo, a barcode or a few words.</p>
+    </div>
+    <div class="plate" aria-hidden="true">
+      <div class="ring-orbit"></div>
+      <div class="disc"></div>
+      <span class="item" style="left:22%;top:20%">🍛</span>
+      <span class="item" style="left:56%;top:16%;animation-delay:-2s">🫓</span>
+      <span class="item" style="left:60%;top:52%;animation-delay:-4s">🥗</span>
+      <span class="item" style="left:20%;top:54%;animation-delay:-1s">🍚</span>
+      <span class="item" style="left:84%;top:-4%;font-size:30px;animation-delay:-3s">🥭</span>
+      <span class="item" style="left:-10%;top:76%;font-size:30px;animation-delay:-5s">🥛</span>
+    </div>
+    <ul class="features">
+      <li><span>📸</span> Snap a photo - every item on the plate is recognised</li>
+      <li><span>🇮🇳</span> 570+ regional Indian dishes, plus packaged foods by barcode</li>
+      <li><span>💧</span> 26 nutrients and water, with ICMR-based goals</li>
+    </ul>
+  </section>
+  <section class="auth-main">
+    <div class="auth-card">
+      {% block auth %}{% endblock %}
+    </div>
+  </section>
 </div>
 {% endblock %}

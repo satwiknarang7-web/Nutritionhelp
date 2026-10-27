@@ -1,11 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Trends{% endblock %}
 {% block content %}
-<div class="page-title" style="margin-bottom:12px"><span class="emoji" aria-hidden="true">📈</span><h1 style="margin:0">Trends & reports</h1></div>
+<div class="page-head">
+  <div><div class="eyebrow">Reports</div><h1 style="margin:0">Your nutrition trends</h1><p>Spot patterns across days, weeks, months and years.</p></div>
+</div>
 
-<div class="card reveal" style="margin-bottom:16px">
+<div class="card reveal" style="margin-bottom:18px">
   <div class="filters">
-    <div class="tabs" role="tablist" id="period-tabs" style="margin:0">
+    <div class="segmented" role="tablist" id="period-tabs">
       <button class="tab" data-period="day">Day</button>
       <button class="tab active" data-period="week">Week</button>
       <button class="tab" data-period="month">Month</button>
@@ -15,49 +17,55 @@
     <div class="field" id="anchor-wrap"><label for="anchor">Ending on</label><input type="date" id="anchor" value="{{ today.isoformat() }}"></div>
     <div class="field hidden" data-custom><label for="start">From</label><input type="date" id="start"></div>
     <div class="field hidden" data-custom><label for="end">To</label><input type="date" id="end" value="{{ today.isoformat() }}"></div>
+    <div class="small muted" id="range-label" style="margin-left:auto;align-self:center"></div>
   </div>
-  <div class="small muted" id="range-label"></div>
 </div>
 
-<div id="empty-state" class="card hidden" style="text-align:center;padding:40px 16px">
-  <div style="font-size:2.5rem" aria-hidden="true">🥗</div>
-  <h2>No entries in this period</h2>
-  <p class="muted">Log some meals in your <a href="/diary">diary</a> and your trends will appear here.</p>
+<div id="empty-state" class="card hidden" style="text-align:center;padding:48px 16px">
+  <div style="font-size:3rem" aria-hidden="true">🥗</div>
+  <h2 class="display" style="font-size:1.5rem">Nothing logged in this period</h2>
+  <p class="muted">Log a few meals in your <a href="/diary">diary</a> and your trends will appear here.</p>
 </div>
 
-<div id="report">
-  <div class="kpis" style="margin-bottom:16px">
-    <div class="card kpi reveal"><div class="k-label">Avg energy / day</div><div class="k-value" id="k-energy">–</div><div class="k-sub" id="k-energy-sub"></div></div>
-    <div class="card kpi reveal"><div class="k-label">Avg protein / day</div><div class="k-value" id="k-protein">–</div><div class="k-sub" id="k-protein-sub"></div></div>
-    <div class="card kpi reveal"><div class="k-label">Days logged</div><div class="k-value" id="k-days">–</div><div class="k-sub" id="k-days-sub"></div></div>
-    <div class="card kpi reveal"><div class="k-label">On calorie target</div><div class="k-value" id="k-target">–</div><div class="k-sub">within ±10% of goal</div></div>
-    <div class="card kpi reveal"><div class="k-label">Avg water / day</div><div class="k-value" id="k-water">–</div><div class="k-sub" id="k-water-sub"></div></div>
+<div id="report" class="grid stagger">
+  <div class="kpis">
+    <div class="card kpi reveal lift"><div class="k-top"><span class="k-label">Avg energy / day</span><span class="icon-chip">🔥</span></div><div class="k-value" id="k-energy">–</div><div class="k-sub" id="k-energy-sub"></div><svg class="spark" id="s-energy" preserveAspectRatio="none" aria-hidden="true"></svg></div>
+    <div class="card kpi reveal lift"><div class="k-top"><span class="k-label">Avg protein / day</span><span class="icon-chip">💪</span></div><div class="k-value" id="k-protein">–</div><div class="k-sub" id="k-protein-sub"></div><svg class="spark" id="s-protein" preserveAspectRatio="none" aria-hidden="true"></svg></div>
+    <div class="card kpi reveal lift"><div class="k-top"><span class="k-label">Avg water / day</span><span class="icon-chip">💧</span></div><div class="k-value" id="k-water">–</div><div class="k-sub" id="k-water-sub"></div><svg class="spark" id="s-water" preserveAspectRatio="none" aria-hidden="true"></svg></div>
+    <div class="card kpi reveal lift"><div class="k-top"><span class="k-label">Days logged</span><span class="icon-chip">📅</span></div><div class="k-value" id="k-days">–</div><div class="k-sub" id="k-days-sub"></div></div>
+    <div class="card kpi reveal lift"><div class="k-top"><span class="k-label">On calorie target</span><span class="icon-chip">🎯</span></div><div class="k-value" id="k-target">–</div><div class="k-sub">days within ±10% of goal</div></div>
   </div>
+
+  <section class="card reveal">
+    <div class="card-head"><h2><span class="icon-chip">🗓️</span> Consistency</h2><span class="small muted">last 26 weeks · energy vs goal</span></div>
+    <div class="heatmap" id="heatmap" role="img" aria-label="Logging calendar"></div>
+    <div class="heat-legend">Less <span class="cell" style="background:var(--surface-3)"></span><span class="cell" style="background:color-mix(in srgb,var(--brand) 30%,var(--surface-3))"></span><span class="cell" style="background:color-mix(in srgb,var(--brand) 55%,var(--surface-3))"></span><span class="cell" style="background:color-mix(in srgb,var(--brand) 80%,var(--surface-3))"></span><span class="cell" style="background:var(--brand)"></span> Closer to goal</div>
+  </section>
 
   <div class="grid grid-2">
-    <section class="card reveal"><div class="card-head"><h2>Energy</h2><span class="small muted" id="energy-note"></span></div>
+    <section class="card reveal"><div class="card-head"><h2><span class="icon-chip">⚡</span> Energy</h2><span class="small muted" id="energy-note"></span></div>
       <div class="chart-box"><canvas id="c-energy" aria-label="Energy intake chart" role="img"></canvas></div></section>
-    <section class="card reveal"><div class="card-head"><h2>Macronutrients</h2><span class="small muted">kcal from each macro</span></div>
+    <section class="card reveal"><div class="card-head"><h2><span class="icon-chip">🍚</span> Macronutrients</h2><span class="small muted">kcal from each macro</span></div>
       <div class="chart-box"><canvas id="c-macros" aria-label="Macronutrient chart" role="img"></canvas></div></section>
-    <section class="card reveal"><div class="card-head"><h2>Any nutrient</h2>
-        <select id="nutrient-select" style="width:auto" aria-label="Nutrient to chart">{% for n in NUTRIENTS %}<option value="{{ n.key }}" {{ 'selected' if n.key == 'iron' }}>{{ n.label }} ({{ n.unit }})</option>{% endfor %}</select></div>
+    <section class="card reveal"><div class="card-head"><h2><span class="icon-chip">🔬</span> Any nutrient</h2>
+        <select id="nutrient-select" style="width:auto;min-height:38px" aria-label="Nutrient to chart">{% for n in NUTRIENTS %}<option value="{{ n.key }}" {{ 'selected' if n.key == 'iron' }}>{{ n.label }} ({{ n.unit }})</option>{% endfor %}</select></div>
       <div class="chart-box"><canvas id="c-nutrient" aria-label="Selected nutrient chart" role="img"></canvas></div></section>
-    <section class="card reveal"><div class="card-head"><h2>💧 Water</h2><span class="small muted">total water incl. drinks & food</span></div>
+    <section class="card reveal"><div class="card-head"><h2><span class="icon-chip">💧</span> Water</h2><span class="small muted">incl. drinks & food</span></div>
       <div class="chart-box"><canvas id="c-water" aria-label="Water intake chart" role="img"></canvas></div></section>
-    <section class="card reveal"><div class="card-head"><h2>Where calories come from</h2></div>
-      <div class="donuts"><div><h3 class="small muted">By macronutrient</h3><div class="chart-box sm"><canvas id="c-split" aria-label="Macro split" role="img"></canvas></div></div>
-      <div><h3 class="small muted">By meal</h3><div class="chart-box sm"><canvas id="c-meals" aria-label="Calories by meal" role="img"></canvas></div></div></div></section>
-    <section class="card reveal"><div class="card-head"><h2>Top foods</h2><span class="small muted">by calories</span></div>
-      <div class="table-wrap"><table><thead><tr><th>Food</th><th class="num">Times</th><th class="num">kcal</th><th class="num">Protein g</th></tr></thead><tbody id="top-foods"></tbody></table></div></section>
+    <section class="card reveal"><div class="card-head"><h2><span class="icon-chip">🥧</span> Where calories come from</h2></div>
+      <div class="donuts"><div><div class="eyebrow">By macronutrient</div><div class="chart-box sm"><canvas id="c-split" aria-label="Macro split" role="img"></canvas></div></div>
+      <div><div class="eyebrow">By meal</div><div class="chart-box sm"><canvas id="c-meals" aria-label="Calories by meal" role="img"></canvas></div></div></div></section>
+    <section class="card reveal"><div class="card-head"><h2><span class="icon-chip">🏆</span> Top foods</h2><span class="small muted">by calories</span></div>
+      <div class="table-wrap"><table><thead><tr><th>Food</th><th class="num">Times</th><th class="num">kcal</th><th class="num hide-sm">Protein</th></tr></thead><tbody id="top-foods"></tbody></table></div></section>
   </div>
 
-  <section class="card reveal" style="margin-top:16px">
-    <div class="card-head"><h2>Average daily nutrients vs goals</h2><span class="small muted">averaged over days with entries</span></div>
-    <div class="table-wrap"><table><thead><tr><th>Nutrient</th><th class="num">Avg / day</th><th class="num hide-sm">Goal</th><th class="num">% of goal</th><th>Status</th></tr></thead><tbody id="nutrient-table"></tbody></table></div>
+  <section class="card reveal">
+    <div class="card-head"><h2><span class="icon-chip">📋</span> Average daily nutrients vs goals</h2><span class="small muted">over days with entries</span></div>
+    <div class="table-wrap"><table><thead><tr><th>Nutrient</th><th class="num">Avg / day</th><th class="num hide-sm">Goal</th><th class="num">Progress</th></tr></thead><tbody id="nutrient-table"></tbody></table></div>
   </section>
 </div>
 {% endblock %}
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>
-<script src="/static/js/trends.js?v=1"></script>
+<script src="/static/js/trends.js?v=2"></script>
 {% endblock %}

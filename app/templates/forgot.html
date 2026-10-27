@@ -1,7 +1,7 @@
 {% extends "auth_base.html" %}
 {% block title %}Reset password{% endblock %}
 {% block auth %}
-<h2 class="auth-title">Forgot your password?</h2>
+<h2 class="auth-title">Forgot your password? 🔑</h2>
 {% if error %}<div class="alert alert-error" role="alert">{{ error }}</div>{% endif %}
 {% if not email_enabled %}
 <div class="alert alert-info">Password reset by email isn't set up on this server yet. Ask the administrator to configure SMTP.</div>

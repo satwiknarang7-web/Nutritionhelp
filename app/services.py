@@ -7,9 +7,9 @@ invalidates all of their cached diary days, stats, goals and foods at once.
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
-from app import crypto, external_foods, food_db
+from app import crypto, external_foods, food_db, insights
 from app.cache import get_cache
 from app.config import get_settings
 from app.nutrients import age_on, suggest_goals
@@ -114,3 +114,27 @@ def resolve_food(repo: Repository, food_ref: str) -> dict | None:
         return None
     custom = repo.get_custom_food(food_ref)
     return {**custom, "source": "custom"} if custom else None
+
+
+def logged_days(repo: Repository, start: date, end: date) -> dict[str, float]:
+    cache = get_cache()
+    key = cache.user_key(repo.user_id, "logged", start.isoformat(), end.isoformat())
+    return cache.get_or_set(key, get_settings().stats_cache_ttl, lambda: repo.logged_days(start, end)) or {}
+
+
+def day_view(repo: Repository, day: date) -> dict:
+    """Everything the diary page shows: totals, meals, targets, score, tips, week strip, streak."""
+    summary = get_day(repo, day)
+    goals = get_goals(repo)
+    today = date.today()
+    monday = day - timedelta(days=day.weekday())
+    logged = logged_days(repo, min(monday, today - timedelta(days=120)), max(monday + timedelta(days=6), today))
+    entries = sum(len(m["entries"]) for m in summary["meals"].values())
+    diet = get_profile(repo).get("diet_type")
+    return {
+        **summary,
+        "score": insights.nutrient_score(summary["targets"]),
+        "tips": insights.tips(summary["targets"], diet, entries > 0),
+        "week": insights.week_strip(logged, day, goals.get("energy", 0)),
+        "streak": insights.streak(logged, today),
+    }

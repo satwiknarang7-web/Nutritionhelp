@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
@@ -189,7 +189,7 @@ def _validate_uuid(value: str) -> None:
 # ---------------------------------------------------------------------------
 @router.get("/diary")
 def diary(day: date, repo: Repository = Depends(get_repo)):
-    return services.get_day(repo, day)
+    return services.day_view(repo, day)
 
 
 class LogIn(BaseModel):
@@ -428,6 +428,20 @@ def stats(
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     return services.get_range(repo, s, e)
+
+
+@router.get("/calendar")
+def calendar(end: date | None = None, weeks: int = 26, repo: Repository = Depends(get_repo)):
+    """Energy per logged day for a GitHub-style consistency calendar."""
+    end = end or date.today()
+    weeks = max(4, min(weeks, 53))
+    start = end - timedelta(days=end.weekday()) - timedelta(weeks=weeks - 1)
+    return {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "goal": services.get_goals(repo).get("energy", 0),
+        "days": services.logged_days(repo, start, end),
+    }
 
 
 # ---------------------------------------------------------------------------

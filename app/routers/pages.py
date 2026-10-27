@@ -13,7 +13,7 @@ from app import auth, emailer, services
 from app.config import get_settings
 from app.auth import AuthUser, current_user, get_repo
 from app.nutrients import CATEGORIES, NUTRIENTS
-from app.repository import Repository
+from app.repository import NeonRepository, Repository
 from app.stats import MEALS
 
 router = APIRouter()
@@ -22,7 +22,14 @@ templates.env.globals.update(NUTRIENTS=NUTRIENTS, CATEGORIES=CATEGORIES, MEALS=M
 
 
 def _render(request: Request, name: str, **ctx) -> HTMLResponse:
-    return templates.TemplateResponse(request, name, {"user": getattr(request.state, "user", None), **ctx})
+    user = getattr(request.state, "user", None)
+    display_name = None
+    if user is not None:
+        try:
+            display_name = services.get_profile(NeonRepository(user.id)).get("display_name")
+        except Exception:  # noqa: BLE001 - the page should still render
+            display_name = None
+    return templates.TemplateResponse(request, name, {"user": user, "display_name": display_name, **ctx})
 
 
 def _parse_day(value: str | None) -> date:
@@ -48,7 +55,7 @@ def diary_page(request: Request, d: str | None = None, user: AuthUser = Depends(
     return _render(
         request, "diary.html",
         day=day, prev_day=day - timedelta(days=1), next_day=day + timedelta(days=1),
-        summary=services.get_day(repo, day), profile=services.get_profile(repo), active="diary",
+        summary=services.day_view(repo, day), profile=services.get_profile(repo), active="diary",
     )
 
 

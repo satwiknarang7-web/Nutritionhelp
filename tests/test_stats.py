@@ -84,3 +84,27 @@ def test_resolve_custom_range_swaps_and_caps():
     assert (e - s).days < stats.MAX_RANGE_DAYS
     with pytest.raises(ValueError):
         stats.resolve_range("custom", date.today())
+
+
+def test_insights_score_streak_and_suggestions():
+    from datetime import date
+
+    from app import insights
+
+    empty = insights.nutrient_score(stats.nutrient_progress({"sodium": 3000}, dict(DEFAULT_GOALS)))
+    assert empty["value"] == 0 and empty["label"] == "Needs work"
+    targets = stats.nutrient_progress({**DEFAULT_GOALS, "iron": 2, "sodium": 3000}, dict(DEFAULT_GOALS))
+    score = insights.nutrient_score(targets)
+    assert 80 <= score["value"] < 100
+    tips = insights.tips(targets, "veg", True)
+    assert tips[0]["kind"] == "limit" and "Sodium" in tips[0]["title"]
+    iron_tip = next(t for t in tips if t.get("nutrient") == "iron")
+    assert iron_tip["title"] == "Low on iron" and iron_tip["foods"]
+    veg_sources = insights.rich_sources("protein", "veg", 10)
+    assert all(not any(w in f["name"].lower() for w in ("chicken", "mutton", "fish", "egg")) for f in veg_sources)
+    assert insights.tips(targets, "veg", False)[0]["kind"] == "start"
+    logged = {"2026-10-27": 1, "2026-10-26": 1, "2026-10-24": 1}
+    assert insights.streak(logged, date(2026, 10, 27)) == 2
+    assert insights.streak(logged, date(2026, 10, 28)) == 2  # today not logged yet
+    week = insights.week_strip(logged, date(2026, 10, 27), 2000)
+    assert [d["dow"] for d in week][0] == "Mon" and sum(d["selected"] for d in week) == 1

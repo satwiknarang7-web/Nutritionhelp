@@ -23,6 +23,8 @@
   ['anchor', 'start', 'end'].forEach((id) => document.getElementById(id).addEventListener('change', load));
   document.getElementById('nutrient-select').addEventListener('change', drawNutrient);
 
+  if (window.Chart) { window.Chart.defaults.font.family = "'Plus Jakarta Sans', system-ui, sans-serif"; }
+
   async function load() {
     const p = new URLSearchParams({ period });
     if (period === 'custom') {
@@ -49,8 +51,12 @@
       animation: { duration: matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 700, easing: 'easeOutCubic' },
       interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { labels: { color: ink, usePointStyle: true, boxWidth: 8, boxHeight: 8 } },
-        tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${NT.fmt(c.parsed.y)} ${unit}` } },
+        legend: { labels: { color: ink, usePointStyle: true, boxWidth: 8, boxHeight: 8, font: { family: 'Plus Jakarta Sans', weight: '600' } } },
+        tooltip: {
+          backgroundColor: css('--text'), titleColor: css('--bg'), bodyColor: css('--bg'), padding: 10, cornerRadius: 10,
+          titleFont: { family: 'Plus Jakarta Sans', weight: '700' }, bodyFont: { family: 'Plus Jakarta Sans' },
+          callbacks: { label: (c) => `${c.dataset.label}: ${NT.fmt(c.parsed.y)} ${unit}` },
+        },
       },
       scales: {
         x: { grid: { display: false }, ticks: { color: ink, maxRotation: 0, autoSkipPadding: 12 } },
@@ -72,7 +78,7 @@
   }
 
   function barDataset(label, values, color) {
-    return { type: 'bar', label, data: values, backgroundColor: color, borderRadius: 4, borderSkipped: 'start', maxBarThickness: 28, order: 1 };
+    return { type: 'bar', label, data: values, backgroundColor: color, hoverBackgroundColor: color, borderRadius: 6, borderSkipped: 'start', maxBarThickness: 26, order: 1 };
   }
 
   function render() {
@@ -91,6 +97,9 @@
     NT.countUp(document.getElementById('k-protein'), avg.protein, 1);
     document.getElementById('k-protein-sub').textContent = `goal ${NT.fmt(g.protein, 0)} g · met ${data.days_protein_met}×`;
     document.getElementById('k-days').textContent = `${data.logged_days}/${data.days}`;
+    spark('s-energy', data.series.map((p) => p.energy), css('--series-1'));
+    spark('s-protein', data.series.map((p) => p.protein), css('--series-3'));
+    spark('s-water', data.series.map((p) => p.water), css('--water'));
     document.getElementById('k-days-sub').textContent = `${Math.round(data.logged_days / data.days * 100)}% consistency`;
     document.getElementById('k-target').textContent = `${data.days_on_energy_target} day${data.days_on_energy_target === 1 ? '' : 's'}`;
     NT.countUp(document.getElementById('k-water'), avg.water);
@@ -148,18 +157,17 @@
     drawNutrient();
 
     document.getElementById('top-foods').innerHTML = data.top_foods.map((f) => `<tr>
-      <td><span aria-hidden="true">${NT.emoji(f)}</span> ${NT.esc(f.name)}</td><td class="num">${f.count}</td>
-      <td class="num">${NT.fmt(f.energy, 0)}</td><td class="num">${NT.fmt(f.protein, 1)}</td></tr>`).join('');
+      <td><span style="display:inline-flex;gap:10px;align-items:center"><span class="food-tile" style="--tile:${NT.tile(f)};width:34px;height:34px;font-size:17px;border-radius:11px">${NT.emoji(f)}</span>${NT.esc(f.name)}</span></td><td class="num">${f.count}</td>
+      <td class="num">${NT.fmt(f.energy, 0)}</td><td class="num hide-sm">${NT.fmt(f.protein, 1)} g</td></tr>`).join('');
 
-    const statusLabel = { ok: '✓ On track', near: '◐ Close', low: '○ Low', over: '▲ Over', none: '–' };
+    const statusIcon = { ok: '✓', near: '◐', low: '○', over: '▲', none: '' };
     let lastCat = '';
     document.getElementById('nutrient-table').innerHTML = data.targets.map((t) => {
-      const head = t.category !== lastCat ? `<tr><th colspan="5" style="padding-top:14px">${t.category}</th></tr>` : '';
+      const head = t.category !== lastCat ? `<tr><th colspan="4" style="padding-top:16px;color:var(--text-2)">${t.category}</th></tr>` : '';
       lastCat = t.category;
       return `${head}<tr><td>${NT.esc(t.label)}${t.kind === 'max' ? ' <span class="badge">limit</span>' : ''}</td>
         <td class="num">${NT.fmt(t.value)} ${NT.esc(t.unit)}</td><td class="num hide-sm">${NT.fmt(t.target)}</td>
-        <td class="num">${t.pct === null ? '–' : Math.round(t.pct) + '%'}</td>
-        <td><span class="small">${t.kind === 'max' && t.status === 'ok' ? '✓ Under limit' : statusLabel[t.status]}</span></td></tr>`;
+        <td class="num"><span class="pct-pill ${t.status}">${statusIcon[t.status]} ${t.pct === null ? '–' : Math.round(t.pct) + '%'}</span></td></tr>`;
     }).join('');
   }
 
@@ -174,5 +182,41 @@
     chart('c-nutrient', { data: { labels, datasets }, options: baseOptions(meta.unit) });
   }
 
+  function spark(id, values, color) {
+    const svg = document.getElementById(id);
+    if (!svg) return;
+    const w = 200, h = 34, pts = values.length > 1 ? values : [values[0] || 0, values[0] || 0];
+    const max = Math.max(...pts, 1);
+    const xy = pts.map((v, i) => [i / (pts.length - 1) * w, h - 3 - (v / max) * (h - 6)]);
+    const line = xy.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    svg.innerHTML = `<defs><linearGradient id="${id}-g" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".28"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
+      <path d="${line} L${w},${h} L0,${h} Z" fill="url(#${id}-g)"/><path d="${line}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>`;
+  }
+
+  async function loadCalendar() {
+    try {
+      const cal = await NT.api(`/api/calendar?weeks=26&end=${document.getElementById('anchor').value || NT.isoDate(new Date())}`);
+      const start = new Date(cal.start + 'T00:00:00'), end = new Date(cal.end + 'T00:00:00');
+      const cells = [];
+      for (let d = new Date(start); d <= end || d.getDay() !== 1; d.setDate(d.getDate() + 1)) {
+        const iso = NT.isoDate(d);
+        if (d > end) { cells.push('<span class="cell out"></span>'); continue; }
+        const kcal = cal.days[iso];
+        let level = 0;
+        if (kcal) {
+          const closeness = cal.goal ? 1 - Math.min(1, Math.abs(kcal - cal.goal) / cal.goal) : 1;
+          level = closeness > 0.9 ? 4 : closeness > 0.75 ? 3 : closeness > 0.5 ? 2 : 1;
+        }
+        const label = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+        cells.push(`<span class="cell" data-l="${level}" title="${label}: ${kcal ? NT.fmt(kcal, 0) + ' kcal' : 'nothing logged'}"></span>`);
+        if (cells.length > 400) break;
+      }
+      document.getElementById('heatmap').innerHTML = cells.join('');
+    } catch (err) { /* calendar is a nice-to-have */ }
+  }
+  document.getElementById('anchor').addEventListener('change', loadCalendar);
+
   load();
+  loadCalendar();
 })();

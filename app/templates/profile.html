@@ -1,103 +1,90 @@
 {% extends "base.html" %}
 {% block title %}Profile{% endblock %}
 {% block content %}
-<div class="page-title" style="margin-bottom:16px"><span class="emoji" aria-hidden="true">🧑‍🍳</span>
-  <div><h1 style="margin:0">Profile & settings</h1><div class="small muted">{{ user.email }}</div></div></div>
 {% if request.query_params.get('welcome') %}
-<div class="alert alert-info reveal">👋 Welcome! Fill in your details so we can suggest personalised goals.</div>
+<div class="alert alert-info reveal">👋 Welcome to NutriTrack! Add a few details below and we'll set personalised daily goals for you.</div>
 {% endif %}
-<div class="grid grid-2">
-<section class="card reveal">
-  <h2>About you</h2>
-  <form id="profile-form">
-    <div class="field"><label for="display_name">Name</label><input id="display_name" name="display_name" value="{{ profile.display_name or '' }}" maxlength="80"></div>
-    <div class="row">
-      <div class="field"><label for="sex">Sex</label><select id="sex" name="sex">
-        <option value="">Prefer not to say</option>
-        {% for v, l in [('female', 'Female'), ('male', 'Male'), ('other', 'Other')] %}<option value="{{ v }}" {{ 'selected' if profile.sex == v }}>{{ l }}</option>{% endfor %}</select></div>
-      <div class="field"><label for="date_of_birth">Date of birth</label><input id="date_of_birth" name="date_of_birth" type="date" value="{{ profile.date_of_birth or '' }}"></div>
+<div class="grid stagger">
+  <section class="hero reveal">
+    <div class="profile-hero">
+      <span class="avatar" style="background:rgb(255 255 255/.16);border:1px solid rgb(255 255 255/.25)">{{ ((profile.display_name or user.email)[:1])|upper }}</span>
+      <div style="flex:1;min-width:0">
+        <div class="eyebrow">Your profile</div>
+        <h1 style="margin:0">{{ profile.display_name or 'Hello there' }}</h1>
+        <div class="small" style="opacity:.8">{{ user.email }}{% if not user.email_verified %} · <span id="verify-note">email not confirmed</span>{% endif %}</div>
+      </div>
     </div>
-    <div class="row">
-      <div class="field"><label for="height_cm">Height (cm)</label><input id="height_cm" name="height_cm" type="number" min="50" max="260" step="0.1" value="{{ profile.height_cm or '' }}"></div>
-      <div class="field"><label for="weight_kg">Weight (kg)</label><input id="weight_kg" name="weight_kg" type="number" min="20" max="350" step="0.1" value="{{ profile.weight_kg or '' }}"></div>
-    </div>
-    <div class="row">
-      <div class="field"><label for="activity_level">Activity</label><select id="activity_level" name="activity_level">
-        {% for v, l in [('sedentary', 'Sedentary (desk job)'), ('light', 'Light (1-3 workouts/wk)'), ('moderate', 'Moderate (3-5/wk)'), ('active', 'Active (6-7/wk)'), ('very_active', 'Very active / physical job')] %}
-        <option value="{{ v }}" {{ 'selected' if profile.activity_level == v }}>{{ l }}</option>{% endfor %}</select></div>
-      <div class="field"><label for="weight_goal">Goal</label><select id="weight_goal" name="weight_goal">
-        {% for v, l in [('lose', 'Lose weight'), ('maintain', 'Maintain'), ('gain', 'Gain weight / muscle')] %}
-        <option value="{{ v }}" {{ 'selected' if profile.weight_goal == v }}>{{ l }}</option>{% endfor %}</select></div>
-    </div>
-    <div class="row">
-      <div class="field"><label for="diet_type">Diet</label><select id="diet_type" name="diet_type">
-        {% for v, l in [('veg', 'Vegetarian'), ('egg', 'Eggetarian'), ('non-veg', 'Non-vegetarian'), ('vegan', 'Vegan'), ('jain', 'Jain')] %}
-        <option value="{{ v }}" {{ 'selected' if profile.diet_type == v }}>{{ l }}</option>{% endfor %}</select></div>
-      <div class="field"><label for="timezone">Time zone</label><input id="timezone" name="timezone" value="{{ profile.timezone or 'Asia/Kolkata' }}"></div>
-    </div>
-    <div class="row" style="align-items:center">
-      <button class="btn btn-primary" type="submit">Save profile</button>
-      <label class="small" style="display:flex;gap:6px;align-items:center;margin:0;font-weight:500"><input type="checkbox" id="apply-goals" checked style="width:auto;min-height:0"> Update my goals from this profile</label>
-    </div>
-  </form>
-</section>
+    <div class="metric-grid" id="metrics" style="margin-top:18px"></div>
+  </section>
 
-<section class="card reveal" id="ai">
-  <h2>✨ AI food recognition</h2>
-  <p class="small muted">Photo recognition and "describe your meal" use Google Gemini. Add your own free API key from
-    <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a> - it is encrypted before it is stored and never shown again.</p>
-  <div id="ai-status" class="alert alert-info">Checking…</div>
-  <form id="key-form">
-    <div class="field"><label for="gemini-key">Gemini API key</label><input id="gemini-key" type="password" autocomplete="off" placeholder="AIza…" minlength="20"></div>
-    <div class="row"><button class="btn btn-primary" type="submit">Save key</button><button class="btn btn-danger hidden" type="button" id="key-remove">Remove my key</button></div>
-  </form>
-  <p class="small muted" style="margin-top:12px">Without AI you can still search 570+ built-in foods, packaged foods by name or barcode, and add your own foods and recipes.</p>
-</section>
+  <div class="grid grid-2">
+    <section class="card reveal">
+      <div class="cat-head"><span class="icon-chip" style="background:var(--brand-soft)">🧍</span><div><h2>About you</h2><p>Used to calculate your goals - never shared.</p></div></div>
+      <form id="profile-form">
+        <div class="field"><label for="display_name">Name</label><input id="display_name" name="display_name" value="{{ profile.display_name or '' }}" maxlength="80"></div>
+        <div class="row">
+          <div class="field"><label for="sex">Sex</label><select id="sex" name="sex">
+            <option value="">Prefer not to say</option>
+            {% for v, l in [('female', 'Female'), ('male', 'Male'), ('other', 'Other')] %}<option value="{{ v }}" {{ 'selected' if profile.sex == v }}>{{ l }}</option>{% endfor %}</select></div>
+          <div class="field"><label for="date_of_birth">Date of birth</label><input id="date_of_birth" name="date_of_birth" type="date" value="{{ profile.date_of_birth or '' }}"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label for="height_cm">Height (cm)</label><input id="height_cm" name="height_cm" type="number" min="50" max="260" step="0.1" value="{{ profile.height_cm or '' }}"></div>
+          <div class="field"><label for="weight_kg">Weight (kg)</label><input id="weight_kg" name="weight_kg" type="number" min="20" max="350" step="0.1" value="{{ profile.weight_kg or '' }}"></div>
+        </div>
+        <div class="field"><label for="activity_level">Activity</label><select id="activity_level" name="activity_level">
+          {% for v, l in [('sedentary', '🪑 Sedentary - desk job, little exercise'), ('light', '🚶 Light - 1-3 workouts a week'), ('moderate', '🏃 Moderate - 3-5 workouts a week'), ('active', '🏋️ Active - 6-7 workouts a week'), ('very_active', '⛏️ Very active - physical job or athlete')] %}
+          <option value="{{ v }}" {{ 'selected' if profile.activity_level == v }}>{{ l }}</option>{% endfor %}</select></div>
+        <div class="row">
+          <div class="field"><label for="weight_goal">Goal</label><select id="weight_goal" name="weight_goal">
+            {% for v, l in [('lose', '📉 Lose weight'), ('maintain', '⚖️ Maintain'), ('gain', '📈 Gain weight / muscle')] %}
+            <option value="{{ v }}" {{ 'selected' if profile.weight_goal == v }}>{{ l }}</option>{% endfor %}</select></div>
+          <div class="field"><label for="diet_type">Diet</label><select id="diet_type" name="diet_type">
+            {% for v, l in [('veg', '🟢 Vegetarian'), ('egg', '🟡 Eggetarian'), ('non-veg', '🔴 Non-vegetarian'), ('vegan', '🌱 Vegan'), ('jain', '🙏 Jain')] %}
+            <option value="{{ v }}" {{ 'selected' if profile.diet_type == v }}>{{ l }}</option>{% endfor %}</select></div>
+        </div>
+        <input type="hidden" name="timezone" value="{{ profile.timezone or 'Asia/Kolkata' }}">
+        <label class="small" style="display:flex;gap:8px;align-items:center;font-weight:600;margin:4px 0 14px"><input type="checkbox" id="apply-goals" checked style="width:18px;min-height:18px;accent-color:var(--brand)"> Update my daily goals from this profile</label>
+        <button class="btn btn-primary btn-block" type="submit">Save profile</button>
+      </form>
+    </section>
+
+    <div class="grid">
+      <section class="card reveal" id="ai">
+        <div class="cat-head"><span class="icon-chip" style="background:var(--saffron-soft)">✨</span><div><h2>AI food recognition</h2><p>Photo and "describe your meal" use Google Gemini.</p></div></div>
+        <div id="ai-status" class="alert alert-info">Checking…</div>
+        <p class="small muted">Get a free key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a>. It's encrypted before it's stored and never shown again.</p>
+        <form id="key-form">
+          <div class="field"><label for="gemini-key">Gemini API key</label><input id="gemini-key" type="password" autocomplete="off" placeholder="AIza…" minlength="20"></div>
+          <div class="row"><button class="btn btn-primary" type="submit">Save key</button><button class="btn btn-danger hidden" type="button" id="key-remove">Remove key</button></div>
+        </form>
+      </section>
+
+      <section class="card reveal">
+        <div class="cat-head"><span class="icon-chip">🔐</span><div><h2>Account & security</h2><p>Password and sign-in.</p></div></div>
+        {% if not user.email_verified %}
+        <div class="alert alert-warn" style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap">
+          <span>📧 Confirm your email so you can always reset your password.</span>
+          <button class="btn btn-sm" id="resend-verify" type="button">Send link</button></div>
+        {% endif %}
+        <form id="pw-form">
+          <div class="row">
+            <div class="field"><label for="cur-pw">Current password</label><input id="cur-pw" type="password" autocomplete="current-password" required></div>
+            <div class="field"><label for="new-pw">New password</label><input id="new-pw" type="password" autocomplete="new-password" minlength="8" maxlength="128" required></div>
+          </div>
+          <button class="btn" type="submit">Change password</button>
+          <p class="tiny faint" style="margin:8px 0 0">Changing your password signs you out on other devices.</p>
+        </form>
+      </section>
+
+      <section class="card reveal danger-zone">
+        <div class="cat-head"><span class="icon-chip" style="background:color-mix(in srgb,var(--danger) 12%,transparent)">🗑️</span><div><h2>Delete account</h2><p>Permanently removes your account, diary, foods and photos.</p></div></div>
+        <button class="btn btn-danger" id="delete-account" type="button">Delete my account…</button>
+      </section>
+    </div>
+  </div>
 </div>
 {% endblock %}
 {% block scripts %}
-<script>
-(function () {
-  const form = document.getElementById('profile-form');
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const body = {};
-    new FormData(form).forEach((v, k) => { body[k] = v === '' ? null : v; });
-    ['height_cm', 'weight_kg'].forEach((k) => { if (body[k] !== null) body[k] = Number(body[k]); });
-    if (!body.timezone) body.timezone = 'Asia/Kolkata';
-    try {
-      await NT.api('/api/profile', { method: 'PUT', body });
-      if (document.getElementById('apply-goals').checked) {
-        const s = await NT.api('/api/goals/suggested');
-        await NT.api('/api/goals', { method: 'PUT', body: s });
-        NT.toast(`Saved · daily target ${NT.fmt(s.energy, 0)} kcal, ${NT.fmt(s.protein, 0)} g protein, ${NT.fmt(s.water, 0)} ml water`, 4500);
-      } else NT.toast('Profile saved');
-    } catch (err) { NT.toast(err.message); }
-  });
-
-  const status = document.getElementById('ai-status');
-  const removeBtn = document.getElementById('key-remove');
-  function showStatus(s) {
-    if (!s.byok_available) status.innerHTML = '⚠️ The server admin has not enabled storing personal API keys.';
-    else if (s.has_user_key) status.innerHTML = `✅ Using your Gemini key (${NT.esc(s.key_hint)}).`;
-    else if (s.active_provider) status.innerHTML = `Using the app's shared AI (${NT.esc(s.active_provider)}). Add your own key for unlimited use.`;
-    else status.innerHTML = 'AI features are off - add your Gemini key to enable photo recognition.';
-    removeBtn.classList.toggle('hidden', !s.has_user_key);
-  }
-  NT.api('/api/settings/ai').then(showStatus).catch((e) => { status.textContent = e.message; });
-  document.getElementById('key-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const input = document.getElementById('gemini-key');
-    const btn = e.submitter; btn.disabled = true; btn.textContent = 'Checking key…';
-    try { showStatus(await NT.api('/api/settings/ai/gemini', { method: 'PUT', body: { api_key: input.value.trim() } })); input.value = ''; NT.toast('Gemini key saved 🔐'); }
-    catch (err) { NT.toast(err.message, 4500); }
-    finally { btn.disabled = false; btn.textContent = 'Save key'; }
-  });
-  removeBtn.addEventListener('click', async () => {
-    if (!confirm('Remove your Gemini API key?')) return;
-    try { showStatus(await NT.api('/api/settings/ai/gemini', { method: 'DELETE' })); NT.toast('Key removed'); }
-    catch (err) { NT.toast(err.message); }
-  });
-})();
-</script>
+<script src="/static/js/profile.js?v=2"></script>
 {% endblock %}

@@ -75,6 +75,19 @@
     return CATEGORY_EMOJI[food.category] || '🍽️';
   };
 
+  const TILE = {
+    'Breads': '#f6e7c8', 'Rice & Grains': '#eef0e1', 'Breakfast': '#fde9cf', 'Dals & Legumes': '#fbe3c4',
+    'Vegetable Curries': '#e2f0d9', 'Meat & Poultry': '#f9dcd2', 'Fish & Seafood': '#d9ecf7', 'Eggs': '#fdf2c9',
+    'Snacks': '#fbe2cf', 'Sweets': '#f8dce8', 'Beverages': '#dcecf9', 'Dairy': '#eef2f7', 'Fats & Oils': '#fbf0cc',
+    'Vegetables': '#dff1de', 'Fruits': '#fde6cf', 'Nuts & Seeds': '#efe3d3', 'Condiments': '#f7e0d6', 'Fast Food': '#fbdcd6',
+    'Salads': '#e1f3df', 'Packaged': '#e9e6f6', 'Branded': '#e9e6f6', 'Recipes': '#f3e3f6', 'My foods': '#fdf0c8',
+  };
+  /** Soft background colour for a food tile (dark mode mutes it). */
+  NT.tile = function (food) {
+    const base = TILE[food.category] || '#efece3';
+    return `color-mix(in srgb, ${base} var(--tile-mix, 100%), var(--surface-2))`;
+  };
+
   NT.confetti = function (symbols = ['🥕', '🍎', '🥦', '🍋', '🥭', '🎉', '✨']) {
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     for (let i = 0; i < 28; i++) {

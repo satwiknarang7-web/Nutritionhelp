@@ -19,7 +19,9 @@ Gemini or Claude vision · vanilla JS + Chart.js
 | **Reports** | Day, week, month, year or custom range. Energy, macros, water and any-nutrient charts against goals, macro and meal split, top foods, and a full average-vs-goal table |
 | **Auth** | Built-in: Argon2id password hashing, server-side sessions (hashed tokens, 30-day sliding expiry), login rate limiting, email verification and password reset over SMTP, change password, delete account |
 | **Bring your own AI key** | Users can save their own Gemini API key. It is encrypted at rest (Fernet) and never shown again |
-| **UI** | Mobile-first, sidebar on desktop and bottom tab bar on phones, light and dark mode, animated rings, bars, water glass and celebrations, respects reduced motion |
+| **Insights** | Daily nutrition score (0-100), logging streak, week strip with per-day progress rings, and tips like "low on iron" that suggest nutrient-dense Indian foods matching your diet (veg, egg, non-veg, vegan, Jain) |
+| **Profile** | Live BMI with Indian cut-offs (overweight from 23), BMR, daily burn and water need, plus change password, email confirmation and account deletion |
+| **UI** | Mobile-first: sidebar on desktop, floating tab bar on phones. Display-serif headings, gradient hero with concentric calorie and macro rings, colour-coded meal cards, 26-week consistency calendar, KPI sparklines, Ctrl/⌘+K quick search. Light and dark mode, smooth animations that respect reduced motion |
 
 ## How food coverage works
 

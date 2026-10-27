@@ -1,16 +1,23 @@
 {% extends "base.html" %}
 {% block title %}Goals{% endblock %}
 {% block content %}
-<div class="card-head" style="margin-bottom:16px">
-  <div class="page-title"><span class="emoji" aria-hidden="true">🎯</span>
-    <div><h1 style="margin:0">Daily nutrition goals</h1>
-    <div class="small muted">Defaults follow ICMR-NIN 2020 recommendations for Indian adults.</div></div></div>
-  <button class="btn" id="suggest-btn">✨ Suggest from my profile</button>
+{% set cats = {
+  'General': ('⚡', 'var(--saffron-soft)', 'Energy and total water - drinks and food moisture count.'),
+  'Macronutrients': ('🍚', 'var(--brand-soft)', 'Protein, carbs, fibre and sugar.'),
+  'Lipids': ('🧈', 'color-mix(in srgb,var(--series-4) 16%,transparent)', 'Fats - saturated fat and cholesterol are limits.'),
+  'Vitamins': ('🍊', 'color-mix(in srgb,var(--tomato) 14%,transparent)', 'ICMR-NIN 2020 recommended dietary allowances.'),
+  'Minerals': ('🧂', 'color-mix(in srgb,var(--series-1) 14%,transparent)', 'Sodium is a limit: under 2,000 mg (5 g salt).'),
+} %}
+<div class="page-head">
+  <div><div class="eyebrow">Targets</div><h1 style="margin:0">Daily nutrition goals</h1>
+  <p>Defaults follow ICMR-NIN 2020 recommendations for Indian adults. Fine-tune anything.</p></div>
+  <button class="btn btn-saffron" id="suggest-btn">✨ Suggest from my profile</button>
 </div>
-<form id="goals-form">
+<form id="goals-form" class="grid stagger">
   {% for cat in CATEGORIES %}
+  {% set meta = cats[cat] %}
   <section class="card reveal">
-    <h2>{{ {'General': '⚡ General', 'Macronutrients': '🍚 Macronutrients', 'Lipids': '🧈 Fats', 'Vitamins': '🍊 Vitamins', 'Minerals': '🧂 Minerals'}[cat] }}</h2>
+    <div class="cat-head"><span class="icon-chip" style="background:{{ meta[1] }}">{{ meta[0] }}</span><div><h2>{{ cat }}</h2><p>{{ meta[2] }}</p></div></div>
     <div class="goal-grid">
       {% for n in NUTRIENTS if n.category == cat %}
       <div class="goal-input">

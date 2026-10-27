@@ -46,13 +46,15 @@
     },
   });
 
-  NT.openAddFood = function (meal) {
+  NT.openAddFood = function (meal, tab = 'search', query = '') {
     currentMeal = meal || null;
     document.getElementById('add-meal-label').textContent = meal ? `· ${meal}` : '';
-    showTab('search');
+    const name = ['search', 'photo', 'describe', 'custom'].includes(tab) ? tab : 'search';
     picker.reset();
-    dialog.showModal();
-    setTimeout(() => picker.focus(), 50);
+    showTab(name);
+    if (!dialog.open) dialog.showModal();
+    if (name === 'search') setTimeout(() => (query ? picker.search(query) : picker.focus()), 50);
+    if (name === 'photo') setTimeout(() => document.getElementById('photo-input').click(), 80);
   };
   dialog.addEventListener('close', () => picker.stop());
 

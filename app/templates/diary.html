@@ -1,70 +1,99 @@
 {% extends "base.html" %}
 {% block title %}Diary{% endblock %}
 {% block topbar %}
-<div class="date-nav" style="justify-content:flex-end">
-  <a class="icon-btn" href="/diary?d={{ prev_day.isoformat() }}" aria-label="Previous day">{{ icon('left') }}</a>
-  <input type="date" id="day-picker" value="{{ day.isoformat() }}" aria-label="Choose date">
-  <a class="icon-btn" href="/diary?d={{ next_day.isoformat() }}" aria-label="Next day">{{ icon('right') }}</a>
-  <a class="btn btn-sm" href="/diary" id="today-btn">Today</a>
-</div>
+<a class="icon-btn" href="/diary?d={{ prev_day.isoformat() }}" aria-label="Previous day">{{ icon('left') }}</a>
+<input type="date" id="day-picker" value="{{ day.isoformat() }}" aria-label="Choose date" style="width:auto;min-height:38px;padding:6px 10px">
+<a class="icon-btn" href="/diary?d={{ next_day.isoformat() }}" aria-label="Next day">{{ icon('right') }}</a>
 {% endblock %}
 {% block content %}
-<div class="card-head" style="margin-bottom:16px">
-  <div class="page-title"><span class="emoji" aria-hidden="true">🍛</span>
-    <div><h1 style="margin:0" id="day-title">{{ day.strftime('%A, %d %b %Y') }}</h1>
-    <div class="small muted" id="greeting"></div></div>
-  </div>
-  <div class="row" style="flex:0 0 auto;gap:8px">
-    <button class="btn" id="copy-btn" title="Copy yesterday's meals to this day">{{ icon('copy', 18) }} Copy yesterday</button>
-    <button class="btn btn-primary" data-add-meal="">{{ icon('plus', 18) }} Add food</button>
-  </div>
-</div>
+<div class="grid stagger">
+  <!-- Hero -->
+  <section class="hero reveal" aria-labelledby="day-title">
+    <div class="hero-top">
+      <div>
+        <div class="eyebrow" id="greeting">Today</div>
+        <h1 id="day-title">{{ day.strftime('%A, %d %B') }}</h1>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-sm btn-glass" id="copy-btn" title="Copy yesterday's meals to this day">{{ icon('copy', 16) }} <span class="hide-sm">Copy yesterday</span></button>
+        <button class="btn btn-sm btn-white" data-add-meal="">{{ icon('plus', 16) }} Add food</button>
+      </div>
+    </div>
+    <div class="hero-grid">
+      <div class="ring" id="energy-ring" role="img" aria-label="Energy progress">
+        <svg viewBox="0 0 140 140">
+          <circle class="track" cx="70" cy="70" r="64" fill="none" stroke-width="9"/>
+          <circle class="value" cx="70" cy="70" r="64" fill="none" stroke-width="9" stroke-dasharray="402.1" stroke-dashoffset="402.1"/>
+          <circle class="track" cx="70" cy="70" r="54" fill="none" stroke-width="4" style="stroke:rgb(255 255 255/.10)"/>
+          <circle class="macro" data-m="protein" cx="70" cy="70" r="54" fill="none" stroke-width="4" stroke="#8fc1ff" stroke-dasharray="339.3" stroke-dashoffset="339.3"/>
+          <circle class="track" cx="70" cy="70" r="48" fill="none" stroke-width="4" style="stroke:rgb(255 255 255/.10)"/>
+          <circle class="macro" data-m="carbs" cx="70" cy="70" r="48" fill="none" stroke-width="4" stroke="#ffb18e" stroke-dasharray="301.6" stroke-dashoffset="301.6"/>
+          <circle class="track" cx="70" cy="70" r="42" fill="none" stroke-width="4" style="stroke:rgb(255 255 255/.10)"/>
+          <circle class="macro" data-m="fat" cx="70" cy="70" r="42" fill="none" stroke-width="4" stroke="#7fe0bb" stroke-dasharray="263.9" stroke-dashoffset="263.9"/>
+        </svg>
+        <div class="ring-label"><strong id="kcal-eaten">0</strong><span id="kcal-left">kcal</span></div>
+      </div>
+      <div>
+        <div class="hero-stats" id="macro-stats"></div>
+        <div class="hero-chips" id="hero-chips"></div>
+      </div>
+    </div>
+  </section>
 
-<div class="grid diary-layout">
-  <div class="grid">
-    <section class="card reveal lift" aria-labelledby="sum-h">
-      <h2 id="sum-h" class="sr-only">Energy summary</h2>
-      <div class="summary">
-        <div class="ring" id="energy-ring">
-          <svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="52" fill="none" stroke-width="12"/>
-          <circle class="value" cx="60" cy="60" r="52" fill="none" stroke-width="12" stroke-dasharray="326.7" stroke-dashoffset="326.7"/></svg>
-          <div class="ring-label"><strong id="kcal-eaten">0</strong><span id="kcal-left">of 0 kcal</span></div>
+  <!-- Week strip -->
+  <nav class="card reveal" aria-label="This week" style="padding:10px">
+    <div class="week" id="week"></div>
+  </nav>
+
+  <div class="grid diary-layout">
+    <div class="grid stagger" id="meals"></div>
+
+    <div class="grid stagger">
+      <section class="card reveal lift" aria-labelledby="water-h">
+        <div class="card-head"><h2 id="water-h"><span class="icon-chip" style="background:color-mix(in srgb,var(--water) 14%,transparent)">💧</span> Water</h2><span class="chip" id="water-chip"></span></div>
+        <div class="water-row">
+          <div class="water-glass" aria-hidden="true"><div class="fill" id="water-fill"></div>
+            <span class="bubble" style="left:30%;animation-delay:.3s"></span><span class="bubble" style="left:60%;animation-delay:1.4s"></span></div>
+          <div class="water-info">
+            <div class="water-amount"><span id="water-total">0</span> <small>/ <span id="water-goal">0</span> ml</small></div>
+            <div class="small muted" id="water-break"></div>
+          </div>
         </div>
-        <div class="macro-bars" id="macro-bars"></div>
-      </div>
-    </section>
-
-    <section class="card reveal" aria-labelledby="meals-h">
-      <div class="card-head"><h2 id="meals-h">Meals</h2><span class="small muted" id="entry-count"></span></div>
-      <div id="meals"></div>
-    </section>
-  </div>
-
-  <div class="grid">
-    <section class="card reveal lift" aria-labelledby="water-h">
-      <div class="card-head"><h2 id="water-h">💧 Water</h2><span class="chip" id="water-chip"></span></div>
-      <div class="water-row">
-        <div class="water-glass" aria-hidden="true"><div class="fill" id="water-fill"></div>
-          <span class="bubble" style="left:30%;animation-delay:.3s"></span><span class="bubble" style="left:60%;animation-delay:1.4s"></span></div>
-        <div class="water-info">
-          <div class="water-head"><span class="water-amount"><span id="water-total">0</span> ml</span><span class="small muted" id="water-goal"></span></div>
-          <div class="small muted" id="water-break"></div>
+        <div class="water-actions">
+          <button class="water-btn" data-water="150"><span>🥃</span>Small<small>150 ml</small></button>
+          <button class="water-btn" data-water="250"><span>🥛</span>Glass<small>250 ml</small></button>
+          <button class="water-btn" data-water="500"><span>🍶</span>Bottle<small>500 ml</small></button>
+          <button class="water-btn" id="water-custom"><span>✏️</span>Custom<small>any ml</small></button>
         </div>
-      </div>
-      <div class="water-actions">
-        <button class="btn btn-sm" data-water="250">+ Glass <span class="muted">250 ml</span></button>
-        <button class="btn btn-sm" data-water="500">+ Bottle <span class="muted">500 ml</span></button>
-        <button class="btn btn-sm" data-water="1000">+ 1 L</button>
-        <button class="btn btn-sm btn-ghost" id="water-custom">Custom</button>
-      </div>
-      <ul class="water-chips" id="water-list" aria-label="Water logged today"></ul>
-    </section>
+        <ul class="water-chips" id="water-list" aria-label="Water logged"></ul>
+      </section>
 
-    <section class="card reveal" aria-labelledby="targets-h">
-      <div class="card-head"><h2 id="targets-h">Nutrient targets</h2><a class="small" href="/goals">Edit goals</a></div>
-      <div class="tabs" role="tablist" id="target-tabs"></div>
-      <div class="targets" id="targets"></div>
-    </section>
+      <section class="card reveal lift" aria-labelledby="score-h">
+        <div class="card-head"><h2 id="score-h"><span class="icon-chip" style="background:var(--brand-soft)">🌿</span> Nutrition score</h2><a class="small" href="/trends">Trends →</a></div>
+        <div class="score-wrap">
+          <div class="score" role="img" id="score-ring">
+            <svg viewBox="0 0 120 120"><defs><linearGradient id="scoreGrad" x1="0" x2="1"><stop offset="0" stop-color="#f2a516"/><stop offset="1" stop-color="#1d7a4c"/></linearGradient></defs>
+              <circle class="t" cx="60" cy="60" r="50" fill="none" stroke-width="11" stroke-dasharray="235.6 314.2" stroke-linecap="round"/>
+              <circle class="v" cx="60" cy="60" r="50" fill="none" stroke-width="11" stroke-dasharray="235.6 314.2" stroke-dashoffset="235.6"/></svg>
+            <div class="lbl"><strong id="score-value">0</strong><span>/ 100</span></div>
+          </div>
+          <div><div style="font-weight:800;font-size:1.05rem" id="score-label"></div>
+            <p class="small muted" style="margin:4px 0 0">How well today covers 18 key vitamins, minerals, protein and fibre - minus points for going over sodium, sugar or saturated fat.</p></div>
+        </div>
+        <div class="gauges" id="gauges"></div>
+      </section>
+
+      <section class="card reveal" aria-labelledby="tips-h">
+        <div class="card-head"><h2 id="tips-h"><span class="icon-chip" style="background:var(--saffron-soft)">✨</span> Insights for you</h2></div>
+        <div class="tips" id="tips"></div>
+      </section>
+
+      <section class="card reveal" aria-labelledby="targets-h">
+        <div class="card-head"><h2 id="targets-h"><span class="icon-chip">📊</span> All nutrients</h2><a class="small" href="/goals">Edit goals</a></div>
+        <div class="tabs" role="tablist" id="target-tabs"></div>
+        <div class="targets" id="targets"></div>
+      </section>
+    </div>
   </div>
 </div>
 
@@ -73,12 +102,13 @@
 <dialog id="edit-dialog" aria-labelledby="edit-h">
   <form method="dialog" class="modal-head"><h2 id="edit-h">Edit entry</h2><button class="icon-btn" aria-label="Close">{{ icon('x') }}</button></form>
   <div class="modal-body">
-    <div class="field"><strong id="edit-name"></strong></div>
+    <div class="field" style="display:flex;gap:12px;align-items:center"><span class="food-tile" id="edit-tile"></span><strong id="edit-name"></strong></div>
     <div class="row">
       <div class="field"><label for="edit-grams">Amount (g / ml)</label><input id="edit-grams" type="number" min="1" step="1" inputmode="decimal"></div>
       <div class="field"><label for="edit-meal">Meal</label><select id="edit-meal">{% for m in MEALS %}<option value="{{ m }}">{{ m|capitalize }}</option>{% endfor %}</select></div>
     </div>
-    <button class="btn btn-primary btn-block" id="edit-save">Save</button>
+    <div id="edit-photo"></div>
+    <button class="btn btn-primary btn-block" id="edit-save">Save changes</button>
   </div>
 </dialog>
 {% endblock %}
@@ -90,7 +120,7 @@
     name: {{ (profile.display_name or '')|tojson }},
   };
 </script>
-<script src="/static/js/foodpicker.js?v=1"></script>
-<script src="/static/js/addfood.js?v=1"></script>
-<script src="/static/js/diary.js?v=1"></script>
+<script src="/static/js/foodpicker.js?v=2"></script>
+<script src="/static/js/addfood.js?v=2"></script>
+<script src="/static/js/diary.js?v=2"></script>
 {% endblock %}
