@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -17,7 +18,7 @@ from app.repository import NeonRepository, Repository
 from app.stats import MEALS
 
 router = APIRouter()
-templates = Jinja2Templates(directory="app/templates")
+templates = Jinja2Templates(directory=Path(__file__).resolve().parent.parent / "templates")
 templates.env.globals.update(NUTRIENTS=NUTRIENTS, CATEGORIES=CATEGORIES, MEALS=MEALS)
 
 

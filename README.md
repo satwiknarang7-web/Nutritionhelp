@@ -81,8 +81,42 @@ uvicorn app.main:app --reload          # http://localhost:8000
 pytest                                 # spins up a throwaway local Postgres automatically
 # or point tests at any empty database: TEST_DATABASE_URL=postgresql://... pytest
 ```
-Or with Docker: `docker build -t nutritrack . && docker run -p 8000:8000 --env-file .env nutritrack`.
+Or with Docker (any container host): `docker build -t nutritrack . && docker run -p 8000:8000 --env-file .env nutritrack`.
 Run `python -m app.migrate` (or `docker run --env-file .env nutritrack python -m app.migrate`) after each deploy that adds a migration.
+
+## Deploy to Vercel
+
+The repo is ready for Vercel's Python runtime: `app/main.py` is detected as the FastAPI entrypoint,
+`/static` files are served from Vercel's CDN, and `vercel.json` gives AI photo analysis up to 60 s.
+
+1. Push the repo to GitHub, then in Vercel choose **Add New → Project** and import it.
+   Leave the framework preset as detected (FastAPI) and the build settings empty.
+2. Before the first deploy, open **Environment Variables** and add at least:
+
+   | Name | Value |
+   |---|---|
+   | `DATABASE_URL` | Neon → your project → **Connect** → pooled connection string |
+   | `APP_ENCRYPTION_KEY` | a key you generate (see below) |
+   | `APP_BASE_URL` | your site URL, e.g. `https://nutritrack.vercel.app` (used in emails) |
+
+   Add the `SMTP_*`, `GEMINI_API_KEY` etc. from `.env.example` whenever you're ready.
+3. Deploy. On each cold start the app applies any pending database migrations automatically
+   (safe when several instances start at once), so you never need to run `python -m app.migrate` by hand.
+
+**Generate `APP_ENCRYPTION_KEY`** (any one of these):
+- PowerShell: `$b = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b).Replace('+','-').Replace('/','_')`
+- macOS / Linux: `openssl rand -base64 32 | tr '+/' '-_'`
+- Python: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+
+Keep it secret and never change it after launch - saved Gemini keys can only be decrypted with the key that encrypted them.
+
+**Recommended on Vercel:** add a Redis database from the Vercel Marketplace (e.g. Upstash) and set
+`REDIS_URL`. Each serverless instance otherwise has its own in-memory cache, so caching and login
+rate limits are per instance rather than shared.
+
+Notes: Vercel limits request bodies to 4.5 MB - meal photos are resized in the browser before upload,
+so this is not normally an issue. Database connections are opened on demand (no idle pool) when
+running on Vercel.
 
 ## Caching
 

@@ -1,3 +1,4 @@
+import os
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -9,8 +10,10 @@ class Settings(BaseSettings):
     # Neon pooled connection string, e.g.
     # postgresql://user:pass@ep-xxx-pooler.ap-southeast-1.aws.neon.tech/nutritrack?sslmode=require
     database_url: str = ""
-    db_pool_min: int = 1
+    db_pool_min: int | None = None  # default: 1 on servers, 0 on Vercel (no idle connections)
     db_pool_max: int = 10
+    # Apply pending migrations on startup. Default: on when running on Vercel.
+    auto_migrate: bool | None = None
 
     # Accounts
     app_env: str = "production"  # "development" logs email links instead of failing silently
@@ -50,6 +53,20 @@ class Settings(BaseSettings):
     ai_cache_ttl: int = 7 * 24 * 3600
 
     max_upload_mb: int = 10
+
+    @property
+    def on_vercel(self) -> bool:
+        return bool(os.environ.get("VERCEL"))
+
+    @property
+    def should_auto_migrate(self) -> bool:
+        return self.auto_migrate if self.auto_migrate is not None else self.on_vercel
+
+    @property
+    def pool_min(self) -> int:
+        if self.db_pool_min is not None:
+            return self.db_pool_min
+        return 0 if self.on_vercel else 1
 
 
 @lru_cache

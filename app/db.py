@@ -39,7 +39,7 @@ def get_pool() -> ConnectionPool:
             raise DatabaseNotConfigured("DATABASE_URL is not set. Copy your Neon connection string into .env.")
         _pool = ConnectionPool(
             settings.database_url,
-            min_size=settings.db_pool_min,
+            min_size=settings.pool_min,
             max_size=settings.db_pool_max,
             # Neon suspends idle computes; drop idle connections before the server does
             max_idle=120,

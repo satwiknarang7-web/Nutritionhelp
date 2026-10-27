@@ -177,7 +177,9 @@
     thinking(photoResults, 'Recognising foods and portions');
     try {
       const form = new FormData();
-      form.append('photo', await shrink(photoFile), 'meal.jpg');
+      const upload = await shrink(photoFile);
+      if (upload.size > 4.3 * 1024 * 1024) throw new Error('That photo is too large - try a smaller one or a screenshot of it.');
+      form.append('photo', upload, 'meal.jpg');
       form.append('note', document.getElementById('photo-note').value);
       const result = await NT.api('/api/analyze/photo', { method: 'POST', form });
       renderAiItems(photoResults, { ...result, source: 'photo' });

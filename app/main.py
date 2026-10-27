@@ -7,22 +7,37 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.gzip import GZipMiddleware
 
 from app import db
+from app.config import get_settings
+from app.migrate import migrate
 from app.auth import NotAuthenticated, auth_middleware
 from app.routers import api, pages
 
 logging.basicConfig(level=logging.INFO)
 
 
+log = logging.getLogger("nutritrack")
+APP_DIR = Path(__file__).resolve().parent
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    if get_settings().should_auto_migrate:
+        try:
+            applied = await run_in_threadpool(migrate, None, False)
+            if applied:
+                log.info("applied migrations: %s", ", ".join(applied))
+        except Exception:  # noqa: BLE001 - serve requests even if the migration check fails
+            log.exception("automatic migration failed")
     yield
     db.close_pool()
 
@@ -30,17 +45,8 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="NutriTrack", docs_url=None, redoc_url=None, lifespan=lifespan)
 
 
-class CachedStaticFiles(StaticFiles):
-    """Static assets are versioned by query string in templates, so cache them for a week."""
-
-    async def get_response(self, path, scope):
-        response = await super().get_response(path, scope)
-        if response.status_code == 200:
-            response.headers["Cache-Control"] = "public, max-age=604800"
-        return response
-
-
-app.mount("/static", CachedStaticFiles(directory="app/static"), name="static")
+# Plain StaticFiles mount: on Vercel these files are promoted to the CDN at build time.
+app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
 app.middleware("http")(auth_middleware)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -52,7 +58,11 @@ async def security_headers(request: Request, call_next):
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(self)")
-    if request.url.path.startswith("/api") or request.url.path in ("/diary", "/goals", "/profile", "/foods"):
+    path = request.url.path
+    if path.startswith("/static/") and response.status_code == 200:
+        # assets are versioned by query string in templates
+        response.headers["Cache-Control"] = "public, max-age=604800"
+    elif path.startswith("/api") or path in ("/diary", "/goals", "/profile", "/foods"):
         response.headers.setdefault("Cache-Control", "private, no-store")
     return response
 
