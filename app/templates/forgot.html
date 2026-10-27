@@ -1,0 +1,13 @@
+{% extends "auth_base.html" %}
+{% block title %}Reset password{% endblock %}
+{% block auth %}
+{% if sent %}
+<div class="alert alert-info">If an account exists for that email, a reset link is on its way.</div>
+{% else %}
+<form method="post" action="/forgot-password">
+  <div class="field"><label for="email">Email</label><input id="email" name="email" type="email" autocomplete="email" required></div>
+  <button class="btn btn-primary btn-block" type="submit">Send reset link</button>
+</form>
+{% endif %}
+<p class="small" style="text-align:center;margin-top:16px"><a href="/login">Back to sign in</a></p>
+{% endblock %}

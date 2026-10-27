@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Goals{% endblock %}
+{% block content %}
+<div class="card-head" style="margin-bottom:16px">
+  <div class="page-title"><span class="emoji" aria-hidden="true">🎯</span>
+    <div><h1 style="margin:0">Daily nutrition goals</h1>
+    <div class="small muted">Defaults follow ICMR-NIN 2020 recommendations for Indian adults.</div></div></div>
+  <button class="btn" id="suggest-btn">✨ Suggest from my profile</button>
+</div>
+<form id="goals-form">
+  {% for cat in CATEGORIES %}
+  <section class="card reveal">
+    <h2>{{ {'General': '⚡ General', 'Macronutrients': '🍚 Macronutrients', 'Lipids': '🧈 Fats', 'Vitamins': '🍊 Vitamins', 'Minerals': '🧂 Minerals'}[cat] }}</h2>
+    <div class="goal-grid">
+      {% for n in NUTRIENTS if n.category == cat %}
+      <div class="goal-input">
+        <label for="g-{{ n.key }}">{{ n.label }} <span class="unit">{{ n.unit }}{% if n.kind == 'max' %} · limit{% endif %}</span></label>
+        <input id="g-{{ n.key }}" name="{{ n.key }}" type="number" min="0" step="any" inputmode="decimal" value="{{ goals[n.key]|round(1) }}">
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+  <div class="sticky-actions"><button class="btn btn-primary" type="submit">Save goals</button></div>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const form = document.getElementById('goals-form');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const goals = {};
+    new FormData(form).forEach((v, k) => { if (v !== '') goals[k] = Number(v); });
+    try { await NT.api('/api/goals', { method: 'PUT', body: goals }); NT.toast('Goals saved 🎯'); NT.confetti(['🎯', '🥗', '✨']); }
+    catch (err) { NT.toast(err.message); }
+  });
+  document.getElementById('suggest-btn').addEventListener('click', async () => {
+    try {
+      const s = await NT.api('/api/goals/suggested');
+      Object.entries(s).forEach(([k, v]) => {
+        const input = form.elements[k];
+        if (input && Number(input.value) !== v) {
+          input.value = v;
+          input.animate([{ background: 'var(--accent-soft)' }, { background: 'var(--surface)' }], { duration: 1200 });
+        }
+      });
+      NT.toast('Suggested from your profile - review and save');
+    } catch (err) { NT.toast(err.message); }
+  });
+})();
+</script>
+{% endblock %}

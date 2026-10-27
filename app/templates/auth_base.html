@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="auth-wrap">
+  <div class="floaters" aria-hidden="true">
+    <span style="left:6%;top:12%">🥭</span>
+    <span style="left:82%;top:8%;animation-delay:-2s">🥦</span>
+    <span style="left:12%;top:72%;animation-delay:-4s">🍌</span>
+    <span style="left:76%;top:70%;animation-delay:-1s">🥕</span>
+    <span style="left:45%;top:4%;animation-delay:-6s">🍋</span>
+    <span style="left:90%;top:40%;animation-delay:-3s">🍅</span>
+    <span style="left:2%;top:42%;animation-delay:-5s">🫑</span>
+    <span style="left:50%;top:86%;animation-delay:-7s">🥥</span>
+  </div>
+  <div class="card auth-card">
+    <div class="brand">{{ icon('leaf', 28) }} NutriTrack</div>
+    <p class="tagline">Track every thali, nutrient and glass of water.</p>
+    {% block auth %}{% endblock %}
+  </div>
+</div>
+{% endblock %}

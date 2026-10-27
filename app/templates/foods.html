@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}My foods{% endblock %}
+{% block content %}
+<div class="page-title" style="margin-bottom:16px"><span class="emoji" aria-hidden="true">🥘</span>
+  <div><h1 style="margin:0">My foods & recipes</h1><div class="small muted">Your own foods, saved AI estimates and home recipes.</div></div></div>
+<div class="grid grid-2">
+<section class="card reveal">
+  <div class="card-head"><h2>👩‍🍳 Recipe builder</h2></div>
+  <p class="small muted" style="margin-top:0">Make any home dish trackable: add each ingredient with its raw weight. Nutrition per serving is calculated for you.</p>
+  <div class="field"><label for="r-name">Recipe name</label><input id="r-name" placeholder="e.g. Amma's sambar" maxlength="120"></div>
+  <div class="row">
+    <div class="field"><label for="r-servings">Servings it makes</label><input id="r-servings" type="number" min="1" step="1" value="4"></div>
+    <div class="field"><label for="r-cooked">Cooked weight (g, optional)</label><input id="r-cooked" type="number" min="1" step="1" placeholder="weigh the pot contents"></div>
+  </div>
+  <h3>Ingredients</h3>
+  <ul class="entries" id="r-ingredients"><li class="empty">No ingredients yet</li></ul>
+  <div class="preview" id="r-preview"></div>
+  <details style="margin:10px 0"><summary class="btn btn-sm">＋ Add ingredient</summary><div id="r-picker" style="margin-top:10px"></div></details>
+  <button class="btn btn-primary btn-block" id="r-save">Save recipe</button>
+</section>
+<section class="card reveal">
+  <div class="card-head"><h2>⭐ Saved foods</h2><span class="small muted">{{ custom_foods|length }} items</span></div>
+  <ul class="entries" id="my-foods">
+    {% for f in custom_foods %}
+    <li class="entry" data-id="{{ f.id }}"><span class="food-emoji">{{ '👩‍🍳' if f.category == 'Recipes' else '⭐' }}</span>
+      <span class="title">{{ f.name }}</span>
+      <span class="meta">{{ f.category }} · {{ (f.per_100g.energy or 0)|round|int }} kcal / 100 g{% if f.servings %} · {{ f.servings[0].label }} = {{ f.servings[0].grams|round|int }} g{% endif %}</span>
+      <span class="kcal"></span>
+      <span class="actions"><button class="icon-btn" data-del-food="{{ f.id }}" aria-label="Delete {{ f.name }}">🗑️</button></span></li>
+    {% else %}
+    <li class="empty">Foods you create, recipes and saved AI estimates appear here.</li>
+    {% endfor %}
+  </ul>
+</section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/js/foodpicker.js?v=1"></script>
+<script>
+(function () {
+  const ingredients = [];
+  const list = document.getElementById('r-ingredients');
+  function render() {
+    list.innerHTML = ingredients.map((it, i) => `<li class="entry pop"><span class="food-emoji">${NT.emoji(it.food)}</span>
+      <span class="title">${NT.esc(it.food.name)}</span><span class="meta">${NT.fmt(it.grams, 0)} g</span>
+      <span class="kcal">${NT.fmt(it.food.per_100g.energy * it.grams / 100, 0)}<div class="small muted">kcal</div></span>
+      <span class="actions"><button class="icon-btn" data-rm="${i}" aria-label="Remove">✖</button></span></li>`).join('') || '<li class="empty">No ingredients yet</li>';
+    const tot = (k) => ingredients.reduce((s, it) => s + (it.food.per_100g[k] || 0) * it.grams / 100, 0);
+    const n = Number(document.getElementById('r-servings').value) || 1;
+    document.getElementById('r-preview').innerHTML = ingredients.length ? [['energy', 'kcal / serving', 0], ['protein', 'protein g', 1], ['carbs', 'carbs g', 1], ['fat', 'fat g', 1]]
+      .map(([k, l, d]) => `<div><strong>${NT.fmt(tot(k) / n, d)}</strong><span>${l}</span></div>`).join('') : '';
+  }
+  list.addEventListener('click', (e) => { const b = e.target.closest('[data-rm]'); if (b) { ingredients.splice(Number(b.dataset.rm), 1); render(); } });
+  document.getElementById('r-servings').addEventListener('input', render);
+  const picker = NT.mountFoodPicker(document.getElementById('r-picker'), {
+    submitLabel: 'Add ingredient',
+    onPick: ({ food, grams }) => { ingredients.push({ food, grams }); render(); picker.reset(); NT.toast(`Added ${food.name}`); },
+  });
+  document.getElementById('r-save').addEventListener('click', async () => {
+    const name = document.getElementById('r-name').value.trim();
+    if (!name) return NT.toast('Give your recipe a name');
+    if (!ingredients.length) return NT.toast('Add at least one ingredient');
+    const cooked = Number(document.getElementById('r-cooked').value) || null;
+    try {
+      await NT.api('/api/foods/recipe', { method: 'POST', body: {
+        name, servings: Number(document.getElementById('r-servings').value) || 1, cooked_weight_g: cooked,
+        ingredients: ingredients.map((it) => ({ food_ref: it.food.id, grams: it.grams })) } });
+      NT.confetti(['👩‍🍳', '🥘', '🌶️', '🧄', '✨']);
+      NT.toast('Recipe saved - find it in Add food search');
+      setTimeout(() => location.reload(), 1200);
+    } catch (err) { NT.toast(err.message, 4000); }
+  });
+  document.getElementById('my-foods').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-del-food]');
+    if (!b || !confirm('Delete this food? Past diary entries keep their nutrition.')) return;
+    try { await NT.api(`/api/foods/custom/${b.dataset.delFood}`, { method: 'DELETE' }); b.closest('.entry').classList.add('leaving'); }
+    catch (err) { NT.toast(err.message); }
+  });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,42 @@
+{% extends "auth_base.html" %}
+{% block title %}Signing in{% endblock %}
+{% block auth %}
+<div id="cb-status" class="muted" style="text-align:center">Finishing sign-in…</div>
+<form id="reset-form" class="hidden">
+  <div class="field"><label for="new-password">New password</label><input id="new-password" type="password" autocomplete="new-password" minlength="8" required></div>
+  <button class="btn btn-primary btn-block" type="submit">Set new password</button>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const params = new URLSearchParams(location.hash.slice(1));
+  const status = document.getElementById('cb-status');
+  const tokens = {
+    access_token: params.get('access_token'),
+    refresh_token: params.get('refresh_token'),
+    expires_in: Number(params.get('expires_in') || 3600),
+  };
+  history.replaceState(null, '', location.pathname);
+  if (params.get('error_description')) { status.textContent = params.get('error_description'); return; }
+  if (!tokens.access_token) { status.innerHTML = 'This link is invalid or expired. <a href="/login">Sign in</a>'; return; }
+  if (params.get('type') === 'recovery') {
+    status.textContent = 'Choose a new password.';
+    const form = document.getElementById('reset-form');
+    form.classList.remove('hidden');
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await NT.api('/auth/reset-password', { method: 'POST', body: { ...tokens, password: document.getElementById('new-password').value } });
+        await NT.api('/auth/session', { method: 'POST', body: tokens });
+        location.href = '/diary';
+      } catch (err) { status.textContent = err.message; }
+    });
+    return;
+  }
+  NT.api('/auth/session', { method: 'POST', body: tokens })
+    .then(() => { location.href = '/profile?welcome=1'; })
+    .catch((err) => { status.textContent = err.message; });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,48 @@
+<dialog id="add-dialog" aria-labelledby="add-h">
+  <form method="dialog" class="modal-head"><h2 id="add-h">Add food <span class="muted small" id="add-meal-label"></span></h2><button class="icon-btn" aria-label="Close">{{ icon('x') }}</button></form>
+  <div class="tabs modal-tabs" role="tablist">
+    <button class="tab active" role="tab" data-tab="search">{{ icon('search', 16) }} Search</button>
+    <button class="tab" role="tab" data-tab="photo">{{ icon('camera', 16) }} Photo</button>
+    <button class="tab" role="tab" data-tab="describe">{{ icon('sparkles', 16) }} Describe</button>
+    <button class="tab" role="tab" data-tab="custom">{{ icon('plus', 16) }} Custom</button>
+  </div>
+  <div class="modal-body">
+    <div data-panel="search"><div id="picker"></div></div>
+
+    <div data-panel="photo" class="hidden">
+      <label class="dropzone" id="dropzone" for="photo-input">
+        <span style="font-size:2rem" aria-hidden="true">📸</span>
+        <strong>Take or upload a photo of your meal</strong>
+        <span class="small">Thalis, street food, home cooking, packaged snacks - each item is detected separately.</span>
+        <input id="photo-input" type="file" accept="image/*" capture="environment" class="sr-only">
+      </label>
+      <div id="photo-stage" class="hidden">
+        <div class="scan-wrap" id="scan-wrap"><img id="photo-preview" class="photo-preview" alt="Selected meal photo"></div>
+        <div class="field" style="margin-top:10px"><label for="photo-note">Note (optional)</label><input id="photo-note" placeholder="e.g. cooked in ghee, 2 rotis hidden under dal"></div>
+        <div class="row"><button class="btn" id="photo-change" style="flex:0 0 auto">Change photo</button><button class="btn btn-primary" id="photo-analyze">{{ icon('sparkles', 18) }} Analyse photo</button></div>
+      </div>
+      <div class="ai-results" data-ai="photo"></div>
+    </div>
+
+    <div data-panel="describe" class="hidden">
+      <div class="field"><label for="describe-text">What did you eat or drink?</label>
+        <textarea id="describe-text" placeholder="2 aloo parathas with a katori of curd and a cup of masala chai"></textarea></div>
+      <button class="btn btn-primary btn-block" id="describe-go">{{ icon('sparkles', 18) }} Estimate nutrition</button>
+      <div class="ai-results" data-ai="describe"></div>
+    </div>
+
+    <div data-panel="custom" class="hidden">
+      <p class="small muted" style="margin-top:0">Add a food from its nutrition label. For home recipes, use <a href="/foods">My foods → Recipe builder</a>.</p>
+      <form id="custom-form">
+        <div class="field"><label for="cf-name">Name</label><input id="cf-name" required maxlength="120" placeholder="e.g. Mom's besan ladoo"></div>
+        <div class="row">
+          <div class="field"><label for="cf-serving">Serving name</label><input id="cf-serving" value="1 serving" maxlength="60"></div>
+          <div class="field"><label for="cf-grams">Serving size (g / ml)</label><input id="cf-grams" type="number" min="1" step="any" required value="100"></div>
+        </div>
+        <div class="small muted" style="margin-bottom:8px">Nutrition per serving - leave unknown values empty.</div>
+        <div class="goal-grid" id="cf-nutrients"></div>
+        <button class="btn btn-primary btn-block" style="margin-top:14px" type="submit">Save & add</button>
+      </form>
+    </div>
+  </div>
+</dialog>

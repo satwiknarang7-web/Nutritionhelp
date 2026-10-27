@@ -1,0 +1,46 @@
+{% from "partials/icons.html" import icon %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1f7a4d">
+  <title>{% block title %}NutriTrack{% endblock %} · NutriTrack</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/app.css?v=1">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231f7a4d' stroke-width='2'%3E%3Cpath d='M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z'/%3E%3C/svg%3E">
+  {% block head %}{% endblock %}
+</head>
+<body>
+{% block body %}
+{% set nav = [('diary', '/diary', 'Diary', 'book'), ('trends', '/trends', 'Trends', 'chart'), ('goals', '/goals', 'Goals', 'target'), ('foods', '/foods', 'My foods', 'bowl'), ('profile', '/profile', 'Profile', 'user')] %}
+<div class="app">
+  <aside class="sidebar">
+    <a href="/diary" class="brand">{{ icon('leaf', 24) }} NutriTrack</a>
+    <nav>
+      {% for key, href, label, ic in nav %}
+      <a href="{{ href }}" class="{{ 'active' if active == key }}">{{ icon(ic) }} {{ label }}</a>
+      {% endfor %}
+    </nav>
+    <div class="spacer"></div>
+    <div class="small muted" style="padding: 0 12px 8px; overflow-wrap:anywhere">{{ user.email if user }}</div>
+    <form method="post" action="/logout"><button class="btn btn-ghost btn-block" type="submit">{{ icon('logout', 18) }} Sign out</button></form>
+  </aside>
+  <div>
+    <header class="topbar">
+      <a href="/diary" class="brand">{{ icon('leaf', 22) }} <span class="brand-text">NutriTrack</span></a>
+      <div style="flex:1">{% block topbar %}{% endblock %}</div>
+    </header>
+    <main>{% block content %}{% endblock %}</main>
+  </div>
+  <nav class="bottom-nav" aria-label="Main">
+    {% for key, href, label, ic in nav %}
+    <a href="{{ href }}" class="{{ 'active' if active == key }}">{{ icon(ic, 22) }}<span>{{ label }}</span></a>
+    {% endfor %}
+  </nav>
+</div>
+{% endblock %}
+<script src="/static/js/common.js?v=1"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Diary{% endblock %}
+{% block topbar %}
+<div class="date-nav" style="justify-content:flex-end">
+  <a class="icon-btn" href="/diary?d={{ prev_day.isoformat() }}" aria-label="Previous day">{{ icon('left') }}</a>
+  <input type="date" id="day-picker" value="{{ day.isoformat() }}" aria-label="Choose date">
+  <a class="icon-btn" href="/diary?d={{ next_day.isoformat() }}" aria-label="Next day">{{ icon('right') }}</a>
+  <a class="btn btn-sm" href="/diary" id="today-btn">Today</a>
+</div>
+{% endblock %}
+{% block content %}
+<div class="card-head" style="margin-bottom:16px">
+  <div class="page-title"><span class="emoji" aria-hidden="true">🍛</span>
+    <div><h1 style="margin:0" id="day-title">{{ day.strftime('%A, %d %b %Y') }}</h1>
+    <div class="small muted" id="greeting"></div></div>
+  </div>
+  <div class="row" style="flex:0 0 auto;gap:8px">
+    <button class="btn" id="copy-btn" title="Copy yesterday's meals to this day">{{ icon('copy', 18) }} Copy yesterday</button>
+    <button class="btn btn-primary" data-add-meal="">{{ icon('plus', 18) }} Add food</button>
+  </div>
+</div>
+
+<div class="grid diary-layout">
+  <div class="grid">
+    <section class="card reveal lift" aria-labelledby="sum-h">
+      <h2 id="sum-h" class="sr-only">Energy summary</h2>
+      <div class="summary">
+        <div class="ring" id="energy-ring">
+          <svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="52" fill="none" stroke-width="12"/>
+          <circle class="value" cx="60" cy="60" r="52" fill="none" stroke-width="12" stroke-dasharray="326.7" stroke-dashoffset="326.7"/></svg>
+          <div class="ring-label"><strong id="kcal-eaten">0</strong><span id="kcal-left">of 0 kcal</span></div>
+        </div>
+        <div class="macro-bars" id="macro-bars"></div>
+      </div>
+    </section>
+
+    <section class="card reveal" aria-labelledby="meals-h">
+      <div class="card-head"><h2 id="meals-h">Meals</h2><span class="small muted" id="entry-count"></span></div>
+      <div id="meals"></div>
+    </section>
+  </div>
+
+  <div class="grid">
+    <section class="card reveal lift" aria-labelledby="water-h">
+      <div class="card-head"><h2 id="water-h">💧 Water</h2><span class="chip" id="water-chip"></span></div>
+      <div class="water-row">
+        <div class="water-glass" aria-hidden="true"><div class="fill" id="water-fill"></div>
+          <span class="bubble" style="left:30%;animation-delay:.3s"></span><span class="bubble" style="left:60%;animation-delay:1.4s"></span></div>
+        <div class="water-info">
+          <div class="water-head"><span class="water-amount"><span id="water-total">0</span> ml</span><span class="small muted" id="water-goal"></span></div>
+          <div class="small muted" id="water-break"></div>
+        </div>
+      </div>
+      <div class="water-actions">
+        <button class="btn btn-sm" data-water="250">+ Glass <span class="muted">250 ml</span></button>
+        <button class="btn btn-sm" data-water="500">+ Bottle <span class="muted">500 ml</span></button>
+        <button class="btn btn-sm" data-water="1000">+ 1 L</button>
+        <button class="btn btn-sm btn-ghost" id="water-custom">Custom</button>
+      </div>
+      <ul class="water-chips" id="water-list" aria-label="Water logged today"></ul>
+    </section>
+
+    <section class="card reveal" aria-labelledby="targets-h">
+      <div class="card-head"><h2 id="targets-h">Nutrient targets</h2><a class="small" href="/goals">Edit goals</a></div>
+      <div class="tabs" role="tablist" id="target-tabs"></div>
+      <div class="targets" id="targets"></div>
+    </section>
+  </div>
+</div>
+
+{% include "partials/add_food_modal.html" %}
+
+<dialog id="edit-dialog" aria-labelledby="edit-h">
+  <form method="dialog" class="modal-head"><h2 id="edit-h">Edit entry</h2><button class="icon-btn" aria-label="Close">{{ icon('x') }}</button></form>
+  <div class="modal-body">
+    <div class="field"><strong id="edit-name"></strong></div>
+    <div class="row">
+      <div class="field"><label for="edit-grams">Amount (g / ml)</label><input id="edit-grams" type="number" min="1" step="1" inputmode="decimal"></div>
+      <div class="field"><label for="edit-meal">Meal</label><select id="edit-meal">{% for m in MEALS %}<option value="{{ m }}">{{ m|capitalize }}</option>{% endfor %}</select></div>
+    </div>
+    <button class="btn btn-primary btn-block" id="edit-save">Save</button>
+  </div>
+</dialog>
+{% endblock %}
+{% block scripts %}
+<script>
+  window.DIARY = {
+    day: {{ day.isoformat()|tojson }},
+    summary: {{ summary|tojson }},
+    name: {{ (profile.display_name or '')|tojson }},
+  };
+</script>
+<script src="/static/js/foodpicker.js?v=1"></script>
+<script src="/static/js/addfood.js?v=1"></script>
+<script src="/static/js/diary.js?v=1"></script>
+{% endblock %}
