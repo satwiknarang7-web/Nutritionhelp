@@ -108,3 +108,15 @@ def test_insights_score_streak_and_suggestions():
     assert insights.streak(logged, date(2026, 10, 28)) == 2  # today not logged yet
     week = insights.week_strip(logged, date(2026, 10, 27), 2000)
     assert [d["dow"] for d in week][0] == "Mon" and sum(d["selected"] for d in week) == 1
+
+
+def test_blank_env_values_fall_back_to_defaults(tmp_path, monkeypatch):
+    from app.config import Settings
+
+    env = tmp_path / ".env"
+    env.write_text("SMTP_PORT=\nCOOKIE_SECURE=\nREQUIRE_EMAIL_VERIFICATION=\nGEMINI_MODEL=\nUSDA_API_KEY=\n")
+    for key in ("SMTP_PORT", "COOKIE_SECURE", "REQUIRE_EMAIL_VERIFICATION", "GEMINI_MODEL", "USDA_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+    s = Settings(_env_file=env)
+    assert s.smtp_port == 587 and s.cookie_secure is True and s.require_email_verification is False
+    assert s.gemini_model == "gemini-2.5-flash" and s.usda_api_key == "DEMO_KEY"
