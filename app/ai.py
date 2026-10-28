@@ -131,7 +131,7 @@ class GeminiKeyInvalid(AIError):
 
 def _is_key_error(exc) -> bool:
     text = f"{getattr(exc, 'status', '')} {getattr(exc, 'message', '')} {exc}".upper()
-    return getattr(exc, "code", None) in (401, 403) or "API_KEY_INVALID" in text or "API KEY NOT VALID" in text
+    return getattr(exc, "code", None) == 401 or "API_KEY_INVALID" in text or "API KEY NOT VALID" in text or "API KEY EXPIRED" in text
 
 
 def pick_gemini_model(model_names: list[str]) -> str | None:
@@ -178,23 +178,39 @@ def gemini_model(client, refresh: bool = False) -> str:
     return model
 
 
+def _google_reason(exc) -> str:
+    message = (getattr(exc, "message", None) or str(exc)).strip()
+    return message if len(message) <= 300 else message[:297] + "..."
+
+
 def validate_gemini_key(api_key: str) -> bool:
-    """True if Gemini accepts the key. Raises AIError if Gemini can't be reached to check."""
+    """True if Gemini accepts the key.
+
+    Raises GeminiKeyInvalid when Google says the key itself is bad, and AIError
+    (with Google's own reason) for anything else, e.g. API not enabled,
+    unsupported region, quota, or network problems.
+    """
     from google import genai
     from google.genai import errors as genai_errors
 
+    # Keep a reference to the client: if it is garbage-collected mid-expression it
+    # closes its HTTP connection and the request fails with "client has been closed".
+    client = genai.Client(api_key=api_key)
     try:
-        next(iter(genai.Client(api_key=api_key).models.list(config={"page_size": 1})), None)
+        next(iter(client.models.list(config={"page_size": 1})), None)
         return True
     except genai_errors.ClientError as exc:
-        if _is_key_error(exc) or exc.code == 400:
-            log.info("Gemini rejected a user key: %s %s", exc.code, exc.message)
-            return False
-        log.warning("Gemini key check failed: %s %s", exc.code, exc.message)
-        raise AIError(f"Couldn't verify the key with Gemini ({exc.code}). Please try again.") from exc
-    except Exception as exc:  # noqa: BLE001 - network, timeouts, 5xx
+        reason = _google_reason(exc)
+        log.warning("Gemini key check failed: %s %s %s", exc.code, getattr(exc, "status", ""), reason)
+        if _is_key_error(exc):
+            raise GeminiKeyInvalid(f"Google says this key isn't valid: {reason}") from exc
+        raise AIError(f"Google couldn't use this key ({exc.code}): {reason}") from exc
+    except genai_errors.APIError as exc:
+        log.warning("Gemini key check failed: %s", exc)
+        raise AIError(f"Gemini is having problems right now ({exc.code}). Please try again shortly.") from exc
+    except Exception as exc:  # noqa: BLE001 - network, timeouts
         log.warning("Gemini key check failed", exc_info=True)
-        raise AIError("Couldn't reach Gemini to verify the key. Please try again in a moment.") from exc
+        raise AIError(f"Couldn't reach Gemini to verify the key ({type(exc).__name__}). Please try again.") from exc
 
 
 def _call_gemini(provider: Provider, image: tuple[bytes, str] | None, text: str) -> FoodAnalysis:

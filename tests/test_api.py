@@ -165,8 +165,12 @@ def test_gemini_key_is_encrypted(client, repo, monkeypatch):
     stored = repo.get_api_key("gemini")["encrypted_key"]
     assert key not in stored
     assert "Gemini (your key)" == r["active_provider"]
-    monkeypatch.setattr(ai, "validate_gemini_key", lambda k: False)
-    assert client.put("/api/settings/ai/gemini", json={"api_key": key}).status_code == 400
+    def invalid(k):
+        raise ai.GeminiKeyInvalid("Google says this key isn't valid: API key not valid.")
+
+    monkeypatch.setattr(ai, "validate_gemini_key", invalid)
+    r = client.put("/api/settings/ai/gemini", json={"api_key": key})
+    assert r.status_code == 400 and "API key not valid" in r.json()["detail"]
     assert client.delete("/api/settings/ai/gemini").json()["has_user_key"] is False
 
 

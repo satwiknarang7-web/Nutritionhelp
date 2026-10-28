@@ -52,9 +52,24 @@ def test_valid_key(fake):
     assert ai.validate_gemini_key("AIzaGoodKey") is True
 
 
-def test_invalid_key_is_rejected(fake):
+def test_invalid_key_is_rejected_with_googles_reason(fake):
     fake(list_error=KEY_ERROR)
-    assert ai.validate_gemini_key("AIzaBadKey") is False
+    with pytest.raises(ai.GeminiKeyInvalid, match="API key not valid"):
+        ai.validate_gemini_key("AIzaBadKey")
+
+
+def test_other_google_errors_are_not_called_invalid_keys(fake):
+    region = errors.ClientError(400, {"error": {"code": 400, "message": "User location is not supported for the API use.",
+                                                "status": "FAILED_PRECONDITION"}})
+    fake(list_error=region)
+    with pytest.raises(ai.AIError, match="User location is not supported") as info:
+        ai.validate_gemini_key("AIzaGoodKey")
+    assert not isinstance(info.value, ai.GeminiKeyInvalid)
+    disabled = errors.ClientError(403, {"error": {"code": 403, "status": "PERMISSION_DENIED",
+                                                  "message": "Generative Language API has not been used in project 123 before or it is disabled."}})
+    fake(list_error=disabled)
+    with pytest.raises(ai.AIError, match="has not been used in project"):
+        ai.validate_gemini_key("AIzaGoodKey")
 
 
 def test_network_problem_is_not_reported_as_bad_key(fake):
@@ -99,4 +114,4 @@ def test_save_key_endpoint_distinguishes_outage(client, monkeypatch):
 
     monkeypatch.setattr(ai, "validate_gemini_key", outage)
     r = client.put("/api/settings/ai/gemini", json={"api_key": "AIzaSyTESTKEY_1234567890abcd"})
-    assert r.status_code == 503 and "try again" in r.json()["detail"]
+    assert r.status_code == 502 and "try again" in r.json()["detail"]

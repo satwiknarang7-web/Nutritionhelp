@@ -517,11 +517,11 @@ def save_gemini_key(body: KeyIn, repo: Repository = Depends(get_repo)):
         raise HTTPException(503, "The server is not configured to store API keys (APP_ENCRYPTION_KEY missing).")
     key = body.api_key.strip()
     try:
-        valid = ai.validate_gemini_key(key)
+        ai.validate_gemini_key(key)
+    except ai.GeminiKeyInvalid as exc:
+        raise HTTPException(400, str(exc)) from exc
     except ai.AIError as exc:
-        raise HTTPException(503, str(exc)) from exc
-    if not valid:
-        raise HTTPException(400, "Gemini says this API key isn't valid. Copy it again from aistudio.google.com/apikey.")
+        raise HTTPException(502, str(exc)) from exc
     repo.set_api_key("gemini", crypto.encrypt(key), crypto.key_hint(key))
     return ai_settings(repo)
 
