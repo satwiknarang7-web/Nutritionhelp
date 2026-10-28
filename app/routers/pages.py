@@ -11,8 +11,8 @@ from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
 from app import auth, emailer, services
-from app.config import get_settings
 from app.auth import AuthUser, current_user, get_repo
+from app.config import get_settings
 from app.nutrients import CATEGORIES, NUTRIENTS
 from app.repository import NeonRepository, Repository
 from app.stats import MEALS

@@ -119,4 +119,4 @@ def test_blank_env_values_fall_back_to_defaults(tmp_path, monkeypatch):
         monkeypatch.delenv(key, raising=False)
     s = Settings(_env_file=env)
     assert s.smtp_port == 587 and s.cookie_secure is True and s.require_email_verification is False
-    assert s.gemini_model == "gemini-2.5-flash" and s.usda_api_key == "DEMO_KEY"
+    assert s.gemini_model == "" and s.usda_api_key == "DEMO_KEY"

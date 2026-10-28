@@ -15,6 +15,7 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -116,6 +117,86 @@ def resolve_provider(user_gemini_key: str | None) -> Provider | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Gemini model selection and key validation
+# ---------------------------------------------------------------------------
+GEMINI_FALLBACK_MODEL = "gemini-flash-latest"  # Google's alias for the current Flash model
+_EXCLUDED_MODEL_WORDS = ("lite", "preview", "exp", "tts", "image", "live", "audio", "embedding", "thinking", "learnlm", "nano")
+_MODEL_CACHE_KEY = "gemini:model"
+
+
+class GeminiKeyInvalid(AIError):
+    pass
+
+
+def _is_key_error(exc) -> bool:
+    text = f"{getattr(exc, 'status', '')} {getattr(exc, 'message', '')} {exc}".upper()
+    return getattr(exc, "code", None) in (401, 403) or "API_KEY_INVALID" in text or "API KEY NOT VALID" in text
+
+
+def pick_gemini_model(model_names: list[str]) -> str | None:
+    """Newest stable 'gemini-X.Y-flash' model from a list of generateContent-capable model names."""
+    best: tuple[tuple[int, ...], str] | None = None
+    for full in model_names:
+        name = full.removeprefix("models/")
+        if any(w in name for w in _EXCLUDED_MODEL_WORDS):
+            continue
+        m = re.fullmatch(r"gemini-(\d+(?:\.\d+)*)-flash(?:-\d{3})?", name)
+        if not m:
+            continue
+        version = tuple(int(x) for x in m.group(1).split("."))
+        if best is None or version > best[0] or (version == best[0] and len(name) < len(best[1])):
+            best = (version, name)
+    return best[1] if best else None
+
+
+def _list_generate_models(client) -> list[str]:
+    names = []
+    for model in client.models.list(config={"page_size": 200}):
+        actions = [a.lower() for a in (model.supported_actions or [])]
+        if not actions or "generatecontent" in actions:
+            names.append(model.name or "")
+    return names
+
+
+def gemini_model(client, refresh: bool = False) -> str:
+    """The configured GEMINI_MODEL, otherwise the newest stable Flash model this key can use (cached 6 h)."""
+    configured = get_settings().gemini_model.strip()
+    if configured:
+        return configured
+    cache = get_cache()
+    if not refresh:
+        cached = cache.get(_MODEL_CACHE_KEY)
+        if cached:
+            return cached
+    try:
+        model = pick_gemini_model(_list_generate_models(client)) or GEMINI_FALLBACK_MODEL
+    except Exception:  # noqa: BLE001 - fall back to Google's alias
+        log.warning("could not list Gemini models", exc_info=True)
+        model = GEMINI_FALLBACK_MODEL
+    cache.set(_MODEL_CACHE_KEY, model, 6 * 3600)
+    return model
+
+
+def validate_gemini_key(api_key: str) -> bool:
+    """True if Gemini accepts the key. Raises AIError if Gemini can't be reached to check."""
+    from google import genai
+    from google.genai import errors as genai_errors
+
+    try:
+        next(iter(genai.Client(api_key=api_key).models.list(config={"page_size": 1})), None)
+        return True
+    except genai_errors.ClientError as exc:
+        if _is_key_error(exc) or exc.code == 400:
+            log.info("Gemini rejected a user key: %s %s", exc.code, exc.message)
+            return False
+        log.warning("Gemini key check failed: %s %s", exc.code, exc.message)
+        raise AIError(f"Couldn't verify the key with Gemini ({exc.code}). Please try again.") from exc
+    except Exception as exc:  # noqa: BLE001 - network, timeouts, 5xx
+        log.warning("Gemini key check failed", exc_info=True)
+        raise AIError("Couldn't reach Gemini to verify the key. Please try again in a moment.") from exc
+
+
 def _call_gemini(provider: Provider, image: tuple[bytes, str] | None, text: str) -> FoodAnalysis:
     from google import genai
     from google.genai import errors as genai_errors
@@ -126,24 +207,33 @@ def _call_gemini(provider: Provider, image: tuple[bytes, str] | None, text: str)
     if image:
         contents.append(types.Part.from_bytes(data=image[0], mime_type=image[1]))
     contents.append(text)
-    try:
-        response = client.models.generate_content(
-            model=get_settings().gemini_model,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=_system_text(),
-                response_mime_type="application/json",
-                response_schema=FoodAnalysis,
-            ),
-        )
-    except genai_errors.ClientError as exc:
-        if exc.code in (401, 403) or "API key" in str(exc):
-            raise AIError("Your Gemini API key was rejected. Check it in Settings.") from exc
-        if exc.code == 429:
-            raise AIError("Gemini rate limit or quota reached. Try again shortly.") from exc
-        raise AIError(f"Gemini request failed: {exc.message or exc}") from exc
-    except genai_errors.APIError as exc:
-        raise AIError("Gemini is temporarily unavailable. Try again shortly.") from exc
+    config = types.GenerateContentConfig(
+        system_instruction=_system_text(),
+        response_mime_type="application/json",
+        response_schema=FoodAnalysis,
+    )
+    model = gemini_model(client)
+    for attempt in range(2):
+        try:
+            response = client.models.generate_content(model=model, contents=contents, config=config)
+            break
+        except genai_errors.ClientError as exc:
+            if exc.code == 404 and attempt == 0 and not get_settings().gemini_model:
+                # The cached model was retired - pick a current one and retry once
+                log.warning("Gemini model %s unavailable, re-selecting", model)
+                model = gemini_model(client, refresh=True)
+                continue
+            log.warning("Gemini request failed: %s %s", exc.code, exc.message)
+            if _is_key_error(exc):
+                raise AIError("Your Gemini API key was rejected. Check it in Profile.") from exc
+            if exc.code == 429:
+                raise AIError("Gemini rate limit or quota reached. Try again shortly.") from exc
+            if exc.code == 404:
+                raise AIError(f"The Gemini model '{model}' isn't available. Check GEMINI_MODEL.") from exc
+            raise AIError(f"Gemini request failed: {exc.message or exc}") from exc
+        except genai_errors.APIError as exc:
+            log.warning("Gemini server error: %s", exc)
+            raise AIError("Gemini is temporarily unavailable. Try again shortly.") from exc
 
     parsed = response.parsed
     if isinstance(parsed, FoodAnalysis):
@@ -290,14 +380,4 @@ def analyze_text(description: str, provider: Provider | None, user_id: str) -> d
         key, settings.ai_cache_ttl, lambda: {**_to_loggable(_run(provider, None, prompt)), "provider": provider.label}
     )
 
-
-def validate_gemini_key(api_key: str) -> bool:
-    """Cheap check that a Gemini key works (model metadata lookup, no token spend)."""
-    from google import genai
-
-    try:
-        genai.Client(api_key=api_key).models.get(model=get_settings().gemini_model)
-        return True
-    except Exception:  # noqa: BLE001
-        return False
 

@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     app_encryption_key: str = ""
 
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = ""  # empty = automatically use the newest stable Gemini Flash model
     anthropic_api_key: str = ""
     claude_model: str = "claude-opus-5-5"
 

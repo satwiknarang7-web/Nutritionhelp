@@ -17,9 +17,9 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.gzip import GZipMiddleware
 
 from app import db
+from app.auth import NotAuthenticated, auth_middleware
 from app.config import get_settings
 from app.migrate import migrate
-from app.auth import NotAuthenticated, auth_middleware
 from app.routers import api, pages
 
 logging.basicConfig(level=logging.INFO)

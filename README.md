@@ -64,7 +64,7 @@ Fill in `DATABASE_URL` and `APP_ENCRYPTION_KEY`. Everything else is optional:
 | `SMTP_*` | Email for verification and password reset (Gmail app password, Resend, Brevo, SES…) |
 | `REQUIRE_EMAIL_VERIFICATION` | Block sign-in until the email is confirmed (default `false`) |
 | `GEMINI_API_KEY` | Optional app-wide Gemini key for users who have not added their own |
-| `GEMINI_MODEL` | Defaults to `gemini-2.5-flash` |
+| `GEMINI_MODEL` | Leave blank to automatically use the newest stable Gemini Flash model (re-selected if Google retires it) |
 | `ANTHROPIC_API_KEY` | Optional app-wide Claude fallback (`claude-opus-5-5`, with server-side refusal fallback) |
 | `USDA_API_KEY` | FoodData Central key (defaults to the rate-limited `DEMO_KEY`) |
 | `REDIS_URL` | Shared cache across workers. Without it an in-process TTL cache is used |
