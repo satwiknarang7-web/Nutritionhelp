@@ -17,7 +17,17 @@
     }
     let data = null;
     try { data = await res.json(); } catch (_) { /* empty body */ }
-    if (!res.ok) throw new Error((data && (data.detail || data.error)) || `Request failed (${res.status})`);
+    if (!res.ok) {
+      const fallback = {
+        413: 'That upload is too large. Try a smaller photo.',
+        429: 'Too many requests - please wait a moment and try again.',
+        500: 'Something went wrong on our side. Please try again.',
+        502: 'The server had trouble reaching a service. Please try again.',
+        503: 'The service is busy right now. Please try again shortly.',
+        504: 'That took too long to finish. Please try again - or use Describe for a quicker estimate.',
+      }[res.status];
+      throw new Error((data && (data.detail || data.error)) || fallback || `Request failed (${res.status})`);
+    }
     return data;
   };
 

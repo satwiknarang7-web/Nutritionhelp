@@ -22,6 +22,7 @@ class FakeModels:
         self.list_error = list_error
         self.generate_errors = list(generate_errors)
         self.used_models = []
+        self.configs = []
 
     def list(self, config=None):
         if self.list_error:
@@ -30,6 +31,7 @@ class FakeModels:
 
     def generate_content(self, model, contents, config):
         self.used_models.append(model)
+        self.configs.append(config)
         if self.generate_errors:
             raise self.generate_errors.pop(0)
         return SimpleNamespace(parsed=ai.FoodAnalysis(is_food=False, items=[], notes=""), text="{}")
@@ -41,7 +43,12 @@ def fake(monkeypatch):
 
     def install(**kw):
         holder["models"] = FakeModels(**kw)
-        monkeypatch.setattr("google.genai.Client", lambda api_key: SimpleNamespace(models=holder["models"]))
+        def client(api_key, http_options=None):
+            holder["http_options"] = http_options
+            return SimpleNamespace(models=holder["models"])
+
+        monkeypatch.setattr("google.genai.Client", client)
+        holder["models"].holder = holder
         return holder["models"]
 
     return install
@@ -115,3 +122,48 @@ def test_save_key_endpoint_distinguishes_outage(client, monkeypatch):
     monkeypatch.setattr(ai, "validate_gemini_key", outage)
     r = client.put("/api/settings/ai/gemini", json={"api_key": "AIzaSyTESTKEY_1234567890abcd"})
     assert r.status_code == 502 and "try again" in r.json()["detail"]
+
+
+def test_analysis_uses_low_thinking_and_a_timeout(fake):
+    models = fake()
+    ai._call_gemini(ai.Provider("gemini", "k", "user"), None, "2 rotis")
+    config = models.configs[0]
+    assert config.thinking_config.thinking_level.name == "LOW"
+    options = models.holder["http_options"]
+    assert options.timeout == ai.GEMINI_TIMEOUT_S * 1000 and options.retry_options.attempts == 1
+
+
+def test_thinking_setting_matches_model_generation():
+    from google.genai import types
+
+    assert ai._gemini_thinking("gemini-3.5-flash", types).thinking_level.name == "LOW"
+    assert ai._gemini_thinking("gemini-2.5-flash", types).thinking_budget == 0
+    assert ai._gemini_thinking("gemini-2.0-flash", types) is None
+
+
+def test_retries_without_thinking_if_model_rejects_it(fake):
+    rejected = errors.ClientError(400, {"error": {"code": 400, "status": "INVALID_ARGUMENT",
+                                                  "message": "Thinking level is not supported for this model."}})
+    models = fake(generate_errors=[rejected])
+    ai._call_gemini(ai.Provider("gemini", "k", "user"), None, "dal")
+    assert models.configs[0].thinking_config is not None and models.configs[1].thinking_config is None
+
+
+def test_timeout_gives_a_friendly_error(fake):
+    import httpx
+
+    fake(generate_errors=[httpx.ReadTimeout("The read operation timed out")])
+    with pytest.raises(ai.AIError, match="took too long"):
+        ai._call_gemini(ai.Provider("gemini", "k", "user"), None, "dal")
+
+
+def test_catalog_items_without_nutrients_use_database_values():
+    analysis = ai.FoodAnalysis(is_food=True, notes="", items=[
+        ai.FoodItem(name="Mutton curry", catalog_id="mutton_curry", quantity=1, unit="katori",
+                    estimated_grams=150, confidence="high", nutrients=None),
+        ai.FoodItem(name="Kosha mangsho", catalog_id=None, quantity=1, unit="katori",
+                    estimated_grams=150, confidence="medium", nutrients=None),
+    ])
+    items = ai._to_loggable(analysis)["items"]
+    assert items[0]["basis"] == "database" and round(items[0]["nutrients"]["energy"]) == 300
+    assert items[1]["food_ref"] == "kosha_mangsho"  # looser name match when the model gave no numbers

@@ -64,7 +64,11 @@ def gemini_server(monkeypatch):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     real_client = genai.Client
     url = f"http://127.0.0.1:{server.server_port}"
-    monkeypatch.setattr(genai, "Client", lambda api_key: real_client(api_key=api_key, http_options={"base_url": url}))
+    def client(api_key, http_options=None):
+        options = http_options.model_dump(exclude_none=True) if http_options else {}
+        return real_client(api_key=api_key, http_options={**options, "base_url": url})
+
+    monkeypatch.setattr(genai, "Client", client)
     yield
     server.shutdown()
 

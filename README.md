@@ -87,7 +87,7 @@ Run `python -m app.migrate` (or `docker run --env-file .env nutritrack python -m
 ## Deploy to Vercel
 
 The repo is ready for Vercel's Python runtime: `app/main.py` is detected as the FastAPI entrypoint,
-`/static` files are served from Vercel's CDN, and `vercel.json` gives AI photo analysis up to 60 s.
+`/static` files are served from Vercel's CDN, and `vercel.json` gives AI photo analysis up to 90 s.
 
 1. Push the repo to GitHub, then in Vercel choose **Add New → Project** and import it.
    Leave the framework preset as detected (FastAPI) and the build settings empty.

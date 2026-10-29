@@ -57,7 +57,9 @@ class FoodItem(BaseModel):
     unit: str = Field(description="Household unit: roti, katori, glass, piece, plate, cup, tbsp, g, ml")
     estimated_grams: float = Field(description="Total edible weight in grams (ml for drinks)")
     confidence: Literal["high", "medium", "low"]
-    nutrients: NutrientEstimate = Field(description="Totals for the whole estimated portion")
+    nutrients: NutrientEstimate | None = Field(
+        description="Totals for the whole estimated portion. Null when catalog_id is set."
+    )
 
 
 class FoodAnalysis(BaseModel):
@@ -78,9 +80,10 @@ Guidelines:
   sabzi), plate, glass (~250 ml), cup (~120 ml tea), piece, tbsp, tsp.
 - Estimate portion size from visual cues (plate ~25-28 cm, steel katori ~150 ml, hands, cutlery).
 - Account for typical home cooking oil/ghee. Mention the assumption in notes.
-- If an item matches an entry in the catalog below, set catalog_id to that id; otherwise null.
-- Nutrient values are totals for the estimated portion, not per 100 g. Water is the
-  total moisture in the portion in ml (drinks are mostly water).
+- If an item matches an entry in the catalog below, set catalog_id to that id and set nutrients
+  to null - the app uses its own data for catalog foods.
+- Only for items not in the catalog: set catalog_id to null and estimate nutrients as totals for
+  the estimated portion, not per 100 g. Water is the total moisture in the portion in ml.
 - If there is no food or drink, set is_food to false and return no items.
 
 Food catalog (id: name):
@@ -213,43 +216,89 @@ def validate_gemini_key(api_key: str) -> bool:
         raise AIError(f"Couldn't reach Gemini to verify the key ({type(exc).__name__}). Please try again.") from exc
 
 
+GEMINI_TIMEOUT_S = 45  # well inside the 90 s serverless limit (vercel.json), leaving room for the rest of the request
+
+
+def _gemini_thinking(model: str, types):
+    """Low thinking keeps photo analysis fast; the right knob depends on the model generation."""
+    m = re.search(r"gemini-(\d+)(?:\.(\d+))?", model)
+    if not m:
+        return types.ThinkingConfig(thinking_level="low")  # aliases like gemini-flash-latest point at new models
+    major, minor = int(m.group(1)), int(m.group(2) or 0)
+    if major >= 3:
+        return types.ThinkingConfig(thinking_level="low")
+    if (major, minor) == (2, 5) and "flash" in model:
+        return types.ThinkingConfig(thinking_budget=0)
+    return None
+
+
+def _is_timeout(exc: BaseException) -> bool:
+    text = f"{type(exc).__name__} {exc}".lower()
+    return "timeout" in text or "timed out" in text
+
+
 def _call_gemini(provider: Provider, image: tuple[bytes, str] | None, text: str) -> FoodAnalysis:
     from google import genai
     from google.genai import errors as genai_errors
     from google.genai import types
 
-    client = genai.Client(api_key=provider.api_key)
+    client = genai.Client(
+        api_key=provider.api_key,
+        http_options=types.HttpOptions(
+            timeout=GEMINI_TIMEOUT_S * 1000,  # milliseconds
+            retry_options=types.HttpRetryOptions(attempts=1),  # fail fast; the user can retry
+        ),
+    )
     contents: list = []
     if image:
         contents.append(types.Part.from_bytes(data=image[0], mime_type=image[1]))
     contents.append(text)
-    config = types.GenerateContentConfig(
-        system_instruction=_system_text(),
-        response_mime_type="application/json",
-        response_schema=FoodAnalysis,
-    )
+
     model = gemini_model(client)
-    for attempt in range(2):
+    use_thinking_config = True
+    reselected = False
+    while True:
+        thinking = _gemini_thinking(model, types) if use_thinking_config else None
+        config = types.GenerateContentConfig(
+            system_instruction=_system_text(),
+            response_mime_type="application/json",
+            response_schema=FoodAnalysis,
+            **({"thinking_config": thinking} if thinking else {}),
+        )
         try:
             response = client.models.generate_content(model=model, contents=contents, config=config)
             break
         except genai_errors.ClientError as exc:
-            if exc.code == 404 and attempt == 0 and not get_settings().gemini_model:
+            message = exc.message or str(exc)
+            if exc.code == 404 and not reselected and not get_settings().gemini_model:
                 # The cached model was retired - pick a current one and retry once
                 log.warning("Gemini model %s unavailable, re-selecting", model)
-                model = gemini_model(client, refresh=True)
+                model, reselected = gemini_model(client, refresh=True), True
                 continue
-            log.warning("Gemini request failed: %s %s", exc.code, exc.message)
+            if exc.code == 400 and use_thinking_config and thinking and "think" in message.lower():
+                log.warning("Gemini model %s rejected the thinking setting, retrying without it", model)
+                use_thinking_config = False
+                continue
+            log.warning("Gemini request failed: %s %s", exc.code, message)
             if _is_key_error(exc):
                 raise AIError("Your Gemini API key was rejected. Check it in Profile.") from exc
             if exc.code == 429:
                 raise AIError("Gemini rate limit or quota reached. Try again shortly.") from exc
             if exc.code == 404:
                 raise AIError(f"The Gemini model '{model}' isn't available. Check GEMINI_MODEL.") from exc
-            raise AIError(f"Gemini request failed: {exc.message or exc}") from exc
+            raise AIError(f"Gemini request failed: {message}") from exc
         except genai_errors.APIError as exc:
             log.warning("Gemini server error: %s", exc)
+            if exc.code == 504 or _is_timeout(exc):
+                raise AIError("Gemini took too long to respond. Please try again.") from exc
             raise AIError("Gemini is temporarily unavailable. Try again shortly.") from exc
+        except Exception as exc:  # noqa: BLE001 - network errors and timeouts from the HTTP client
+            log.warning("Gemini request error (%s): %s", model, exc)
+            if _is_timeout(exc):
+                raise AIError(
+                    "Gemini took too long to respond. Try again, or use Describe for a quicker estimate."
+                ) from exc
+            raise AIError("Couldn't reach Gemini. Please try again.") from exc
 
     parsed = response.parsed
     if isinstance(parsed, FoodAnalysis):
@@ -320,13 +369,14 @@ def _to_loggable(analysis: FoodAnalysis) -> dict:
         grams = max(1.0, float(item.estimated_grams or 0))
         food = food_db.get_food(item.catalog_id) if item.catalog_id else None
         if food is None:
-            food = food_db.best_match(item.name, min_score=80)
+            # Without the model's own estimate, accept a looser name match rather than zeros
+            food = food_db.best_match(item.name, min_score=80 if item.nutrients else 55)
         if food is not None:
             per_100g = clean_nutrients(food.per_100g)
             nutrients = scale(per_100g, grams)
             basis = "database"
         else:
-            nutrients = clean_nutrients(item.nutrients.model_dump())
+            nutrients = clean_nutrients(item.nutrients.model_dump() if item.nutrients else {})
             per_100g = {k: round(v * 100 / grams, 3) for k, v in nutrients.items()}
             basis = "ai_estimate"
         items.append(
