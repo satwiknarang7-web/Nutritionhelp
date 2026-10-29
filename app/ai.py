@@ -16,6 +16,7 @@ import base64
 import io
 import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import Literal
 
@@ -124,7 +125,8 @@ def resolve_provider(user_gemini_key: str | None) -> Provider | None:
 # Gemini model selection and key validation
 # ---------------------------------------------------------------------------
 GEMINI_FALLBACK_MODEL = "gemini-flash-latest"  # Google's alias for the current Flash model
-_EXCLUDED_MODEL_WORDS = ("lite", "preview", "exp", "tts", "image", "live", "audio", "embedding", "thinking", "learnlm", "nano")
+GEMINI_LITE_FALLBACK_MODEL = "gemini-flash-lite-latest"
+_EXCLUDED_MODEL_WORDS = ("preview", "exp", "tts", "image", "live", "audio", "embedding", "thinking", "learnlm", "nano")
 _MODEL_CACHE_KEY = "gemini:model"
 
 
@@ -137,14 +139,15 @@ def _is_key_error(exc) -> bool:
     return getattr(exc, "code", None) == 401 or "API_KEY_INVALID" in text or "API KEY NOT VALID" in text or "API KEY EXPIRED" in text
 
 
-def pick_gemini_model(model_names: list[str]) -> str | None:
-    """Newest stable 'gemini-X.Y-flash' model from a list of generateContent-capable model names."""
+def pick_gemini_model(model_names: list[str], lite: bool = False) -> str | None:
+    """Newest stable 'gemini-X.Y-flash' (or '-flash-lite') model from generateContent-capable names."""
+    pattern = r"gemini-(\d+(?:\.\d+)*)-flash" + (r"-lite" if lite else "") + r"(?:-\d{3})?"
     best: tuple[tuple[int, ...], str] | None = None
     for full in model_names:
         name = full.removeprefix("models/")
         if any(w in name for w in _EXCLUDED_MODEL_WORDS):
             continue
-        m = re.fullmatch(r"gemini-(\d+(?:\.\d+)*)-flash(?:-\d{3})?", name)
+        m = re.fullmatch(pattern, name)
         if not m:
             continue
         version = tuple(int(x) for x in m.group(1).split("."))
@@ -162,23 +165,33 @@ def _list_generate_models(client) -> list[str]:
     return names
 
 
-def gemini_model(client, refresh: bool = False) -> str:
-    """The configured GEMINI_MODEL, otherwise the newest stable Flash model this key can use (cached 6 h)."""
+def gemini_models(client, refresh: bool = False) -> tuple[str, str | None]:
+    """(primary, fast fallback) models.
+
+    GEMINI_MODEL wins if set (no fallback). Otherwise the newest stable Flash model this key
+    can use, with the newest Flash-Lite as a faster fallback. Cached for 6 hours.
+    """
     configured = get_settings().gemini_model.strip()
     if configured:
-        return configured
+        return configured, None
     cache = get_cache()
     if not refresh:
         cached = cache.get(_MODEL_CACHE_KEY)
-        if cached:
-            return cached
+        if isinstance(cached, list) and cached:
+            return cached[0], cached[1]
     try:
-        model = pick_gemini_model(_list_generate_models(client)) or GEMINI_FALLBACK_MODEL
-    except Exception:  # noqa: BLE001 - fall back to Google's alias
+        names = _list_generate_models(client)
+        primary = pick_gemini_model(names) or GEMINI_FALLBACK_MODEL
+        lite = pick_gemini_model(names, lite=True)
+    except Exception:  # noqa: BLE001 - fall back to Google's aliases
         log.warning("could not list Gemini models", exc_info=True)
-        model = GEMINI_FALLBACK_MODEL
-    cache.set(_MODEL_CACHE_KEY, model, 6 * 3600)
-    return model
+        primary, lite = GEMINI_FALLBACK_MODEL, GEMINI_LITE_FALLBACK_MODEL
+    cache.set(_MODEL_CACHE_KEY, [primary, lite], 6 * 3600)
+    return primary, lite
+
+
+def gemini_model(client, refresh: bool = False) -> str:
+    return gemini_models(client, refresh)[0]
 
 
 def _google_reason(exc) -> str:
@@ -216,7 +229,11 @@ def validate_gemini_key(api_key: str) -> bool:
         raise AIError(f"Couldn't reach Gemini to verify the key ({type(exc).__name__}). Please try again.") from exc
 
 
-GEMINI_TIMEOUT_S = 45  # well inside the 90 s serverless limit (vercel.json), leaving room for the rest of the request
+# Time budget per attempt (seconds). Both fit inside the 90 s serverless limit (vercel.json).
+GEMINI_PRIMARY_TIMEOUT_S = 30
+GEMINI_FALLBACK_TIMEOUT_S = 25
+GEMINI_MAX_OUTPUT_TOKENS = 3000  # a full thali needs a few hundred; caps runaway generations
+GEMINI_IMAGE_SIDE = 1024  # plenty for recognising dishes, and much faster to process
 
 
 def _gemini_thinking(model: str, types):
@@ -237,7 +254,12 @@ def _is_timeout(exc: BaseException) -> bool:
     return "timeout" in text or "timed out" in text
 
 
-def _call_gemini(provider: Provider, image: tuple[bytes, str] | None, text: str) -> FoodAnalysis:
+class _GeminiTooSlow(Exception):
+    pass
+
+
+def _gemini_attempt(provider: Provider, model: str, contents: list, timeout_s: int) -> FoodAnalysis:
+    """One generation with its own deadline. Raises _GeminiTooSlow on timeout, AIError otherwise."""
     from google import genai
     from google.genai import errors as genai_errors
     from google.genai import types
@@ -245,39 +267,94 @@ def _call_gemini(provider: Provider, image: tuple[bytes, str] | None, text: str)
     client = genai.Client(
         api_key=provider.api_key,
         http_options=types.HttpOptions(
-            timeout=GEMINI_TIMEOUT_S * 1000,  # milliseconds
-            retry_options=types.HttpRetryOptions(attempts=1),  # fail fast; the user can retry
+            timeout=timeout_s * 1000,  # milliseconds; also sent to Google as the server deadline
+            retry_options=types.HttpRetryOptions(attempts=1),  # no silent retries
         ),
     )
-    contents: list = []
-    if image:
-        contents.append(types.Part.from_bytes(data=image[0], mime_type=image[1]))
-    contents.append(text)
-
-    model = gemini_model(client)
     use_thinking_config = True
-    reselected = False
     while True:
         thinking = _gemini_thinking(model, types) if use_thinking_config else None
         config = types.GenerateContentConfig(
             system_instruction=_system_text(),
             response_mime_type="application/json",
             response_schema=FoodAnalysis,
+            max_output_tokens=GEMINI_MAX_OUTPUT_TOKENS,
+            media_resolution=types.MediaResolution.MEDIA_RESOLUTION_MEDIUM,
             **({"thinking_config": thinking} if thinking else {}),
         )
+        started = time.monotonic()
         try:
             response = client.models.generate_content(model=model, contents=contents, config=config)
+            log.info("Gemini %s answered in %.1fs", model, time.monotonic() - started)
             break
         except genai_errors.ClientError as exc:
             message = exc.message or str(exc)
-            if exc.code == 404 and not reselected and not get_settings().gemini_model:
-                # The cached model was retired - pick a current one and retry once
-                log.warning("Gemini model %s unavailable, re-selecting", model)
-                model, reselected = gemini_model(client, refresh=True), True
-                continue
             if exc.code == 400 and use_thinking_config and thinking and "think" in message.lower():
                 log.warning("Gemini model %s rejected the thinking setting, retrying without it", model)
                 use_thinking_config = False
+                continue
+            raise
+        except genai_errors.APIError as exc:
+            if exc.code == 504 or _is_timeout(exc):
+                log.warning("Gemini %s hit its %ss deadline", model, timeout_s)
+                raise _GeminiTooSlow from exc
+            raise
+        except Exception as exc:  # noqa: BLE001 - HTTP client timeouts and network errors
+            if _is_timeout(exc):
+                log.warning("Gemini %s timed out after %ss", model, timeout_s)
+                raise _GeminiTooSlow from exc
+            log.warning("Gemini request error (%s): %s", model, exc)
+            raise AIError("Couldn't reach Gemini. Please try again.") from exc
+
+    parsed = response.parsed
+    if isinstance(parsed, FoodAnalysis):
+        return parsed
+    finish = str(getattr((response.candidates or [None])[0], "finish_reason", "") or "")
+    if "MAX_TOKENS" in finish:
+        log.warning("Gemini %s ran out of output tokens", model)
+        raise _GeminiTooSlow
+    if not response.text:
+        raise AIError("Gemini returned no result (the request may have been blocked).")
+    try:
+        return FoodAnalysis.model_validate_json(response.text)
+    except ValueError as exc:
+        raise AIError("Gemini's answer couldn't be read. Please try again.") from exc
+
+
+def _call_gemini(provider: Provider, image: tuple[bytes, str] | None, text: str) -> FoodAnalysis:
+    from google import genai
+    from google.genai import errors as genai_errors
+    from google.genai import types
+
+    contents: list = []
+    if image:
+        contents.append(types.Part.from_bytes(data=image[0], mime_type=image[1]))
+    contents.append(text)
+
+    lister = genai.Client(api_key=provider.api_key)
+    primary, fallback = gemini_models(lister)
+    plan = [(primary, GEMINI_PRIMARY_TIMEOUT_S)]
+    if fallback and fallback != primary:
+        plan.append((fallback, GEMINI_FALLBACK_TIMEOUT_S))
+    reselected = False
+    i = 0
+    while i < len(plan):
+        model, timeout_s = plan[i]
+        try:
+            return _gemini_attempt(provider, model, contents, timeout_s)
+        except _GeminiTooSlow:
+            i += 1  # try the faster model, if there is one
+            continue
+        except genai_errors.ClientError as exc:
+            message = exc.message or str(exc)
+            if exc.code == 404 and not reselected and not get_settings().gemini_model:
+                # A cached model was retired - pick current ones and start again
+                log.warning("Gemini model %s unavailable, re-selecting", model)
+                primary, fallback = gemini_models(lister, refresh=True)
+                plan = [(primary, GEMINI_PRIMARY_TIMEOUT_S)]
+                if fallback and fallback != primary:
+                    plan.append((fallback, GEMINI_FALLBACK_TIMEOUT_S))
+                reselected, i = True, 0
                 continue
             log.warning("Gemini request failed: %s %s", exc.code, message)
             if _is_key_error(exc):
@@ -289,23 +366,8 @@ def _call_gemini(provider: Provider, image: tuple[bytes, str] | None, text: str)
             raise AIError(f"Gemini request failed: {message}") from exc
         except genai_errors.APIError as exc:
             log.warning("Gemini server error: %s", exc)
-            if exc.code == 504 or _is_timeout(exc):
-                raise AIError("Gemini took too long to respond. Please try again.") from exc
             raise AIError("Gemini is temporarily unavailable. Try again shortly.") from exc
-        except Exception as exc:  # noqa: BLE001 - network errors and timeouts from the HTTP client
-            log.warning("Gemini request error (%s): %s", model, exc)
-            if _is_timeout(exc):
-                raise AIError(
-                    "Gemini took too long to respond. Try again, or use Describe for a quicker estimate."
-                ) from exc
-            raise AIError("Couldn't reach Gemini. Please try again.") from exc
-
-    parsed = response.parsed
-    if isinstance(parsed, FoodAnalysis):
-        return parsed
-    if not response.text:
-        raise AIError("Gemini returned no result (the request may have been blocked).")
-    return FoodAnalysis.model_validate_json(response.text)
+    raise AIError("Gemini is responding slowly right now. Try again, or use Describe for a quicker estimate.")
 
 
 def _call_claude(provider: Provider, image: tuple[bytes, str] | None, text: str) -> FoodAnalysis:
@@ -420,7 +482,7 @@ def analyze_photo(
 ) -> dict:
     if provider is None:
         raise AIUnavailable("AI photo recognition is not set up. Add your Gemini API key in Settings.")
-    jpeg, mime = prepare_image(image_bytes)
+    jpeg, mime = prepare_image(image_bytes, max_side=GEMINI_IMAGE_SIDE if provider.kind == "gemini" else MAX_IMAGE_SIDE)
     note = (note or "").strip()[:300]
     prompt = "Identify the foods and drinks in this photo and estimate each portion."
     if note:

@@ -127,9 +127,22 @@
     });
   }
 
-  function thinking(container, label) {
-    container.innerHTML = `<div class="thinking"><span class="spinner"></span> ${label}<span class="dots"><span>.</span><span>.</span><span>.</span></span></div>`;
+  let thinkingTimer = null;
+  /** Spinner with staged messages and an elapsed-time counter, so longer waits don't feel stuck. */
+  function thinking(container, stages) {
+    clearInterval(thinkingTimer);
+    const started = Date.now();
+    container.innerHTML = `<div class="thinking"><span class="spinner"></span> <span data-stage>${stages[0][1]}</span><span class="dots"><span>.</span><span>.</span><span>.</span></span> <span class="tiny faint tabular" data-elapsed></span></div>`;
+    thinkingTimer = setInterval(() => {
+      const secs = Math.floor((Date.now() - started) / 1000);
+      const stageEl = container.querySelector('[data-stage]');
+      const elapsedEl = container.querySelector('[data-elapsed]');
+      if (!stageEl) { clearInterval(thinkingTimer); return; }
+      stageEl.textContent = stages.filter(([at]) => secs >= at).pop()[1];
+      elapsedEl.textContent = secs >= 3 ? `${secs}s` : '';
+    }, 500);
   }
+  function stopThinking() { clearInterval(thinkingTimer); }
 
   function aiError(container, err) {
     const settingsHint = /api key|not set up|Settings/i.test(err.message) ? ' <a href="/profile#ai">Open settings</a>' : '';
@@ -157,7 +170,7 @@
   document.getElementById('photo-change').addEventListener('click', () => { photoInput.value = ''; photoInput.click(); });
 
   /** Downscale on the device before upload: faster on mobile data, same accuracy. */
-  async function shrink(file, max = 1568) {
+  async function shrink(file, max = 1024) {
     try {
       const bmp = await createImageBitmap(file);
       const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
@@ -174,7 +187,7 @@
     const btn = e.currentTarget;
     btn.disabled = true;
     document.getElementById('scan-wrap').classList.add('scanning');
-    thinking(photoResults, 'Recognising foods and portions');
+    thinking(photoResults, [[0, 'Uploading photo'], [2, 'Recognising foods and portions'], [10, 'Matching dishes to the food database'], [25, 'Taking longer than usual - trying a faster model']]);
     try {
       const form = new FormData();
       const upload = await shrink(photoFile);
@@ -182,8 +195,9 @@
       form.append('photo', upload, 'meal.jpg');
       form.append('note', document.getElementById('photo-note').value);
       const result = await NT.api('/api/analyze/photo', { method: 'POST', form });
+      stopThinking();
       renderAiItems(photoResults, { ...result, source: 'photo' });
-    } catch (err) { aiError(photoResults, err); }
+    } catch (err) { stopThinking(); aiError(photoResults, err); }
     finally { btn.disabled = false; document.getElementById('scan-wrap').classList.remove('scanning'); }
   });
 
@@ -194,11 +208,12 @@
     if (text.length < 2) return NT.toast('Describe what you ate');
     const btn = e.currentTarget;
     btn.disabled = true;
-    thinking(describeResults, 'Estimating nutrition');
+    thinking(describeResults, [[0, 'Estimating nutrition'], [8, 'Matching dishes to the food database'], [25, 'Taking longer than usual - trying a faster model']]);
     try {
       const result = await NT.api('/api/analyze/text', { method: 'POST', body: { description: text } });
+      stopThinking();
       renderAiItems(describeResults, { ...result, source: 'text_ai' });
-    } catch (err) { aiError(describeResults, err); }
+    } catch (err) { stopThinking(); aiError(describeResults, err); }
     finally { btn.disabled = false; }
   });
 

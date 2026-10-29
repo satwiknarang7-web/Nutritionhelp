@@ -94,7 +94,7 @@ def test_picks_newest_stable_flash_model(fake):
 def test_retired_model_is_replaced_automatically(fake):
     from app.cache import get_cache
 
-    get_cache().set(ai._MODEL_CACHE_KEY, "gemini-2.5-flash", 3600)  # stale choice from before retirement
+    get_cache().set(ai._MODEL_CACHE_KEY, ["gemini-2.5-flash", None], 3600)  # stale choice from before retirement
     models = fake(generate_errors=[NOT_FOUND])
     ai._call_gemini(ai.Provider("gemini", "k", "user"), None, "2 rotis")
     assert models.used_models == ["gemini-2.5-flash", "gemini-3.5-flash"]
@@ -130,7 +130,9 @@ def test_analysis_uses_low_thinking_and_a_timeout(fake):
     config = models.configs[0]
     assert config.thinking_config.thinking_level.name == "LOW"
     options = models.holder["http_options"]
-    assert options.timeout == ai.GEMINI_TIMEOUT_S * 1000 and options.retry_options.attempts == 1
+    assert options.timeout == ai.GEMINI_PRIMARY_TIMEOUT_S * 1000 and options.retry_options.attempts == 1
+    assert config.max_output_tokens == ai.GEMINI_MAX_OUTPUT_TOKENS
+    assert config.media_resolution.name == "MEDIA_RESOLUTION_MEDIUM"
 
 
 def test_thinking_setting_matches_model_generation():
@@ -149,12 +151,34 @@ def test_retries_without_thinking_if_model_rejects_it(fake):
     assert models.configs[0].thinking_config is not None and models.configs[1].thinking_config is None
 
 
-def test_timeout_gives_a_friendly_error(fake):
+def test_slow_flash_falls_back_to_flash_lite(fake):
     import httpx
 
-    fake(generate_errors=[httpx.ReadTimeout("The read operation timed out")])
-    with pytest.raises(ai.AIError, match="took too long"):
+    models = fake(generate_errors=[httpx.ReadTimeout("The read operation timed out")])
+    ai._call_gemini(ai.Provider("gemini", "k", "user"), None, "dal")
+    assert models.used_models == ["gemini-3.5-flash", "gemini-3.5-flash-lite"]
+    assert models.holder["http_options"].timeout == ai.GEMINI_FALLBACK_TIMEOUT_S * 1000
+
+
+def test_server_deadline_also_triggers_fallback(fake):
+    deadline = errors.ServerError(504, {"error": {"code": 504, "message": "Deadline expired", "status": "DEADLINE_EXCEEDED"}})
+    models = fake(generate_errors=[deadline])
+    ai._call_gemini(ai.Provider("gemini", "k", "user"), None, "dal")
+    assert models.used_models == ["gemini-3.5-flash", "gemini-3.5-flash-lite"]
+
+
+def test_both_models_too_slow_gives_a_friendly_error(fake):
+    import httpx
+
+    fake(generate_errors=[httpx.ReadTimeout("timed out"), httpx.ReadTimeout("timed out")])
+    with pytest.raises(ai.AIError, match="responding slowly"):
         ai._call_gemini(ai.Provider("gemini", "k", "user"), None, "dal")
+
+
+def test_picks_lite_model_for_fallback():
+    names = ["models/gemini-3.5-flash", "models/gemini-3.5-flash-lite", "models/gemini-2.5-flash-lite", "models/gemini-3.8-flash-lite-preview"]
+    assert ai.pick_gemini_model(names) == "gemini-3.5-flash"
+    assert ai.pick_gemini_model(names, lite=True) == "gemini-3.5-flash-lite"
 
 
 def test_catalog_items_without_nutrients_use_database_values():
